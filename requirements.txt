@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic
+chromadb
+requests
+google-generativeai
+python-multipart
+shutil
+numpy
+pandas
