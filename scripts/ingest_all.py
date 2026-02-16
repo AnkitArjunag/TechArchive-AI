@@ -1,4 +1,4 @@
-import chromadb
+import chromadb # type: ignore
 import json
 import os
 

@@ -1,4 +1,4 @@
-import chromadb
+import chromadb # type: ignore
 
 # Connect to the existing database
 client = chromadb.PersistentClient(path="./techarchive_db")

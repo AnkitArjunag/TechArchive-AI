@@ -1,0 +1,133 @@
+/* TechArchive AI: Global Professional Styles */
+:root {
+  --primary-blue: #101357; /* Deep Navy for Trust & Defense */
+  --accent-gold: #fbaf08;  /* Gold for highlighting constants */
+  --bg-light: #f5f7f9;
+  --text-dark: #1a1a1a;
+  --border-gray: #d1d5db;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, sans-serif;
+  background-color: var(--bg-light);
+  color: var(--text-dark);
+}
+
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Header Styling */
+.dashboard-header {
+  background-color: var(--primary-blue);
+  color: white;
+  padding: 1rem 2rem;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.dashboard-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* Main Content Grid */
+.dashboard-main {
+  display: grid;
+  grid-template-columns: 1fr 400px; /* Main chat area + Sidebar */
+  gap: 1.5rem;
+  padding: 1.5rem;
+  flex-grow: 1;
+  overflow: hidden;
+}
+
+/* Left Panel: Search & Chat */
+.interaction-panel {
+  display: flex;
+  flex-direction: column;
+  background: white;
+  border-radius: 8px;
+  border: 1px solid var(--border-gray);
+  padding: 1.5rem;
+}
+
+.search-box {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.search-box input {
+  flex-grow: 1;
+  padding: 12px;
+  border: 1px solid var(--border-gray);
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+.search-box button {
+  background-color: var(--primary-blue);
+  color: white;
+  border: none;
+  padding: 0 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.search-box button:hover { opacity: 0.9; }
+
+.chat-display {
+  flex-grow: 1;
+  border-top: 1px solid var(--border-gray);
+  padding-top: 20px;
+}
+
+.response-area {
+  background: #f9fafb;
+  padding: 15px;
+  border-left: 4px solid var(--accent-gold); /* Highlighted response */
+  border-radius: 4px;
+  line-height: 1.6;
+}
+
+/* Right Panel: Automated Parameter Table */
+.parameter-panel {
+  background: white;
+  border-radius: 8px;
+  border: 1px solid var(--border-gray);
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.parameter-panel h3 {
+  margin-top: 0;
+  color: var(--primary-blue);
+  border-bottom: 2px solid var(--accent-gold);
+  padding-bottom: 5px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th {
+  text-align: left;
+  background-color: #f3f4f6;
+  padding: 10px;
+  border-bottom: 1px solid var(--border-gray);
+}
+
+td {
+  padding: 10px;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: top;
+}
+
+tr:hover { background-color: #fcfcfc; }
