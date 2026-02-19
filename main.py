@@ -2,7 +2,7 @@ from fastapi import FastAPI, Query, HTTPException  # type: ignore
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore
 from pydantic import BaseModel  # type: ignore
 import chromadb  # type: ignore
-import requests
+import requests # type: ignore
 import os
 
 app = FastAPI(title="TechArchive AI: Intelligence Hub")
