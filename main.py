@@ -1,13 +1,15 @@
-from fastapi import FastAPI, Query, HTTPException  # type: ignore
-from fastapi.middleware.cors import CORSMiddleware  # type: ignore
-from pydantic import BaseModel  # type: ignore
-import chromadb  # type: ignore
-import requests # type: ignore
 import os
+import requests
+from fastapi import FastAPI, HTTPException #
+from fastapi.middleware.cors import CORSMiddleware #
+from pydantic import BaseModel
+from typing import List
+import chromadb #
 
-app = FastAPI(title="TechArchive AI: Intelligence Hub")
+# 1. Initialize the FastAPI app BEFORE defining routes
+app = FastAPI()
 
-# Enable CORS for your React Dashboard
+# 2. Configure CORS so your React frontend can communicate
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,102 +17,95 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Connect to the Technical Brain (Vector Store)
-DB_PATH = "./techarchive_db"
-client = chromadb.PersistentClient(path=DB_PATH)
-collection = client.get_collection(name="defense_research")
+# 3. Initialize ChromaDB
+client = chromadb.PersistentClient(path="./techarchive_db")
+collection = client.get_or_create_collection(name="defense_research")
 
+# 4. Define Data Models for Multi-turn Chat
+class Message(BaseModel):
+    role: str  # 'user' or 'assistant'
+    content: str
 
 class ChatRequest(BaseModel):
-    user_query: str
+    messages: List[Message]
 
-
-@app.get("/")
-def root():
-    return {"message": "TechArchive AI Backend is Live (Ollama Powered 🚀)"}
-
-
-@app.get("/search")
-async def search_archive(q: str = Query(..., description="Technical query")):
-    """
-    Performs semantic retrieval for the Parameter Table.
-    """
-    results = collection.query(query_texts=[q], n_results=5)
-
-    formatted_results = []
-    for i in range(len(results['documents'][0])):
-        formatted_results.append({
-            "chunk_id": results['ids'][0][i],
-            "content": results['documents'][0][i],
-            "source": results['metadatas'][0][i]['source'],
-            "hardware": results['metadatas'][0][i]['hardware'],
-            "pages": results['metadatas'][0][i]['pages']
-        })
-
-    return {"results": formatted_results}
-
-
+# 5. Define Routes (Now 'app' is defined and safe to use)
 @app.post("/chat")
 async def chat_with_archive(request: ChatRequest):
     try:
-        # 1️⃣ Check if DB has data
-        if collection.count() == 0:
-            return {"answer": "Error: The vector database is empty."}
+        # 1. Retrieve the same data that populated your table
+        user_query = request.messages[-1].content
+        results = collection.query(query_texts=[user_query], n_results=10)
+        
+        # 2. Format the context with clear Source/Page markers
+        context_parts = []
+        for doc, meta in zip(results['documents'][0], results['metadatas'][0]):
+            source_info = f"[SOURCE: {meta.get('source')} | PAGE: {meta.get('pages')}]"
+            context_parts.append(f"{source_info}\n{doc}")
+        
+        knowledge_base = "\n\n---\n\n".join(context_parts)
 
-        print(f"User Query: {request.user_query}")
+        # 3. Enhanced Reasoning Prompt for local LLMs
+        system_instruction = f"""
+        [ROLE: DEFENSE ENGINEERING ASSISTANT]
+        You must answer using ONLY the 'KNOWLEDGE BASE' below. 
+        
+        KNOWLEDGE BASE:
+        {knowledge_base}
+        
+        RULES:
+        1. If the query asks for a value (like SMT temp or CFO), search the KNOWLEDGE BASE for it.
+        2. If found, report the value and the [SOURCE/PAGE] exactly.
+        3. If NOT found, say "I cannot find specific data for [Query] in the current archive."
+        """
 
-        # 2️⃣ Retrieve relevant context from Chroma
-        query_results = collection.query(
-            query_texts=[request.user_query],
-            n_results=3
-        )
+        # 4. Construct the conversation string
+        full_prompt = system_instruction + "\n\n"
+        for msg in request.messages:
+            full_prompt += f"{msg.role.upper()}: {msg.content}\n"
+        full_prompt += "ASSISTANT:"
 
-        context_text = "\n\n".join(query_results['documents'][0])
-
-        # 3️⃣ Build RAG Prompt
-        prompt = f"""
-You are a defense electronics expert.
-
-Use ONLY the context below to answer.
-If the answer is not present in the context, say:
-"Information not found in database."
-
-Question:
-{request.user_query}
-
-Context:
-{context_text}
-"""
-
-        print("Sending to Ollama...")
-
-        # 4️⃣ Send to Ollama Local LLM
+        # 5. Call local Ollama (ensure gemma:2b is running)
         response = requests.post(
             "http://localhost:11434/api/generate",
-            json={
-                "model": "llama3",  # Change to "phi3" if using that
-                "prompt": prompt,
-                "stream": False
-            }
+            json={"model": "gemma:2b", "prompt": full_prompt, "stream": False}
         )
-
-        if response.status_code != 200:
-            raise Exception(f"Ollama Error: {response.text}")
-
-        answer = response.json()["response"]
-
-        return {"answer": answer}
+        
+        return {"answer": response.json().get("response")}
 
     except Exception as e:
-        print("\n" + "=" * 50)
-        print("INTERNAL SERVER ERROR DETAILS:")
-        print(f"Error Type: {type(e).__name__}")
-        print(f"Message: {str(e)}")
-        print("=" * 50 + "\n")
+        print(f"Reasoning Error: {e}")
+        raise HTTPException(status_code=500, detail="Intelligence Hub encountered a reasoning error.")
+    
+@app.get("/search")
+async def search_archive(q: str):
+    """
+    Retrieves technical chunks for the Automated Parameter Table.
+    """
+    try:
+        # 1. Query ChromaDB for the top 5 relevant technical segments
+        results = collection.query(query_texts=[q], n_results=5)
+        
+        formatted_results = []
+        
+        # 2. Iterate through documents and their associated metadata
+        for i in range(len(results['documents'][0])):
+            content = results['documents'][0][i]
+            metadata = results['metadatas'][0][i]
+            
+            formatted_results.append({
+                "hardware": metadata.get("hardware", "General Research"), # Extraction for the table
+                "content": content,
+                "source": metadata.get("source", "Unknown Doc"),
+                "pages": metadata.get("pages", "N/A") # Critical for citations
+            })
+            
+        return {"results": formatted_results}
 
-        raise HTTPException(status_code=500, detail=str(e))
-
+    except Exception as e:
+        print(f"Search Error: {e}")
+        return {"results": [], "error": str(e)}
 
 if __name__ == "__main__":
-    import uvicorn  # type: ignore
+    import uvicorn # type: ignore
     uvicorn.run(app, host="0.0.0.0", port=8000)

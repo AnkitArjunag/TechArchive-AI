@@ -1,85 +1,123 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import './App.css';
 
 const App = () => {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
-  const [chatResponse, setChatResponse] = useState('');
+  // 1. Conversation History State
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [tableData, setTableData] = useState([]);
   const [loading, setLoading] = useState(false);
+  const chatEndRef = useRef(null);
 
-  const handleSearch = async () => {
-    if (!query) return;
+  // Auto-scroll to latest message
+  const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const handleSendMessage = async () => {
+    if (!input.trim()) return;
+
+    const userMessage = { role: 'user', content: input };
+    const updatedHistory = [...messages, userMessage];
+    
+    setMessages(updatedHistory);
+    setInput('');
     setLoading(true);
-    setChatResponse("Analyzing defense archive...");
 
     try {
-      // 1. Fetch data for the Automated Parameter Table
-      const searchRes = await axios.get(`http://localhost:8000/search?q=${query}`);
-      setResults(searchRes.data.results);
+      // 1. Update Parameter Table (Phase 3 Retrieval)
+      const searchRes = await axios.get(`http://localhost:8000/search?q=${input}`);
+      setTableData(searchRes.data.results);
 
-      // 2. Fetch the Grounded AI Answer
-      const chatRes = await axios.post(`http://localhost:8000/chat`, { user_query: query });
-      setChatResponse(chatRes.data.answer);
+      // 2. Post Full History for Multi-turn Reasoning
+      const chatRes = await axios.post(`http://localhost:8000/chat`, { 
+        messages: updatedHistory 
+      });
 
+      setMessages([...updatedHistory, { role: 'assistant', content: chatRes.data.answer }]);
     } catch (error) {
       console.error("System Error:", error);
-      setChatResponse("Error: Could not reach the Intelligence Hub.");
+      setMessages([...updatedHistory, { role: 'assistant', content: "Error: Intelligence Hub offline." }]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
     <div className="dashboard-container">
       <header className="dashboard-header">
+        <div className="status-badge">● LOCAL OLLAMA ACTIVE</div>
         <h1>TechArchive AI: Defense Research Portal</h1>
       </header>
 
       <main className="dashboard-main">
-        <section className="interaction-panel">
-          <div className="search-box">
-            <input 
-              type="text" 
-              placeholder="Query archive (e.g., MoS2 SMT, xMIMO specs)..." 
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-            />
-            <button onClick={handleSearch} disabled={loading}>
-              {loading ? 'Processing...' : 'Search Archive'}
-            </button>
-          </div>
-
-          <div className="chat-display">
+        {/* Modernized Chat Section */}
+        <section className="interaction-panel card">
+          <div className="chat-window">
             <h3>Interactive Research Assistant</h3>
-            <div className="response-area">
-              <p style={{ whiteSpace: 'pre-wrap' }}>{chatResponse || "Enter a query to begin analysis..."}</p>
+            <div className="message-list">
+              {messages.length === 0 && (
+                <div className="welcome-prompt">
+                  Query the archive to begin deep reasoning (e.g., "What is the SMT temp for MoS2?").
+                </div>
+              )}
+              {messages.map((msg, i) => (
+                <div key={i} className={`chat-bubble ${msg.role}`}>
+                  <div className="bubble-content">
+                    <strong>{msg.role === 'user' ? 'You' : 'AI Assistant'}:</strong>
+                    <p>{msg.content}</p>
+                  </div>
+                </div>
+              ))}
+              {loading && <div className="typing-indicator">Assistant is reasoning...</div>}
+              <div ref={chatEndRef} />
+            </div>
+
+            <div className="input-box">
+              <input 
+                type="text" 
+                placeholder="Ask follow-up questions or new specs..." 
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+              />
+              <button onClick={handleSendMessage} disabled={loading}>
+                {loading ? '...' : 'Send'}
+              </button>
             </div>
           </div>
         </section>
 
-        <section className="parameter-panel">
+        {/* Automated Parameter Table */}
+        <section className="parameter-panel card">
           <h3>Automated Parameter Table</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Hardware Module</th>
-                <th>Extracted Parameters</th>
-                <th>Source (Page)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.length > 0 ? results.map((res, index) => (
-                <tr key={index}>
-                  <td><strong>{res.hardware || "General"}</strong></td>
-                  <td>{res.content.substring(0, 150)}...</td>
-                  <td>{res.source}<br/>(Pg {res.pages})</td>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Hardware Module</th>
+                  <th>Extracted Parameters</th>
+                  <th>Source</th>
                 </tr>
-              )) : (
-                <tr><td colSpan="3" style={{textAlign: 'center'}}>No data retrieved yet.</td></tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {tableData.length > 0 ? tableData.map((res, index) => (
+                  <tr key={index}>
+                    <td><strong>{res.hardware || "N/A"}</strong></td>
+                    <td>{res.content.substring(0, 150)}...</td>
+                    <td><span className="source-tag">{res.source}</span><br/>(Pg {res.pages})</td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan="3" className="no-data">Archive data will appear here.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </section>
       </main>
     </div>
