@@ -1,10 +1,10 @@
 import os
-import requests
-from fastapi import FastAPI, HTTPException #
-from fastapi.middleware.cors import CORSMiddleware #
-from pydantic import BaseModel
+import requests # type: ignore
+from fastapi import FastAPI, HTTPException # type: ignore #
+from fastapi.middleware.cors import CORSMiddleware # type: ignore #
+from pydantic import BaseModel # type: ignore
 from typing import List
-import chromadb #
+import chromadb # type: ignore #
 
 # 1. Initialize the FastAPI app BEFORE defining routes
 app = FastAPI()
