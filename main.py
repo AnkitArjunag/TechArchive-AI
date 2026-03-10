@@ -4,11 +4,19 @@ from fastapi.middleware.cors import CORSMiddleware # type: ignore
 from pydantic import BaseModel # type: ignore
 from typing import List
 import chromadb # type: ignore
+from fastapi.staticfiles import StaticFiles # type: ignore
 
 # ----------------------------------------------------
 # FastAPI Setup
 # ----------------------------------------------------
 app = FastAPI()
+
+
+app.mount(
+    "/docs",
+    StaticFiles(directory=r"D:\BEL_2026\Journals"),
+    name="docs"
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -126,7 +134,7 @@ Rules:
                 "stream": False,
                 "temperature": 0.2
             },
-            timeout=120
+            timeout=300
         )
 
         return {"answer": response.json().get("response", "")}

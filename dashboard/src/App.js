@@ -1,127 +1,245 @@
-import React, { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
-import './App.css';
+import React, { useState, useEffect, useRef } from "react";
+import axios from "axios";
+import "./App.css";
 
-const App = () => {
-  // 1. Conversation History State
+function App() {
+
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState("");
   const [tableData, setTableData] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
+  const [loadingInsights, setLoadingInsights] = useState(false);
+
   const chatEndRef = useRef(null);
 
-  // Auto-scroll to latest message
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isThinking]);
+
+  const openDocument = (doc) => {
+
+  // Extract document number (doc4, doc10, etc.)
+  const match = doc.source.match(/doc\d+/);
+
+  if (!match) return;
+
+  const docId = match[0];
+
+  const pdfMap = {
+    doc1: "doc1_cooling_sspa.pdf",
+    doc2: "doc2_weapon_params.pdf",
+    doc3: "doc3_rf_fingerprinting.pdf",
+    doc4: "doc4_ugv_navigation.pdf",
+    doc5: "doc5_rf_microwave_trends.pdf",
+    doc6: "doc6_digital_twin.pdf",
+    doc7: "doc7_defence_ecosystem.pdf",
+    doc8: "doc8_brain_computer.pdf",
+    doc9: "doc9_bio_toxins.pdf",
+    doc10: "doc10_aircraft_aerodynamics.pdf"
+  };
+
+  const filename = pdfMap[docId];
+
+  if (!filename) return;
+
+  const url = `http://localhost:8000/docs/${filename}#page=${doc.pages}`;
+
+  window.open(url, "_blank");
+
+};
 
   const handleSendMessage = async () => {
+
     if (!input.trim()) return;
 
-    const userMessage = { role: 'user', content: input };
+    const userMessage = { role: "user", content: input };
     const updatedHistory = [...messages, userMessage];
-    
+
     setMessages(updatedHistory);
-    setInput('');
-    setLoading(true);
+    setInput("");
+
+    setIsThinking(true);
+    setLoadingInsights(true);
+
+    setTableData([]); // clear previous results
 
     try {
-      // 1. Update Parameter Table (Phase 3 Retrieval)
-      const searchRes = await axios.get(`http://localhost:8000/search?q=${input}`);
+
+      const searchRes = await axios.get(
+        `http://localhost:8000/search?q=${input}`
+      );
+
       setTableData(searchRes.data.results);
 
-      // 2. Post Full History for Multi-turn Reasoning
-      const chatRes = await axios.post(`http://localhost:8000/chat`, { 
-        messages: updatedHistory 
-      });
+      const chatRes = await axios.post(
+        `http://localhost:8000/chat`,
+        { messages: updatedHistory }
+      );
 
-      setMessages([...updatedHistory, { role: 'assistant', content: chatRes.data.answer }]);
+      setMessages(prev => [
+        ...prev,
+        { role: "assistant", content: chatRes.data.answer }
+      ]);
+
     } catch (error) {
-      console.error("System Error:", error);
-      setMessages([...updatedHistory, { role: 'assistant', content: "Error: Intelligence Hub offline." }]);
+
+      setMessages(prev => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "System error: Local AI node unavailable."
+        }
+      ]);
+
     } finally {
-      setLoading(false);
+
+      setIsThinking(false);
+      setLoadingInsights(false);
+
     }
   };
 
   return (
-    <div className="dashboard-container">
-      <header className="dashboard-header">
-        <div className="status-badge">● LOCAL OLLAMA ACTIVE</div>
-        <h1>TechArchive AI: Defense Research Portal</h1>
+
+    <div className="app">
+
+      <header className="topbar">
+
+        <div className="logo">TechArchive AI</div>
+
+        <div className="badges">
+          <span className="badge">🧠 Llama 3.2</span>
+          <span className="badge">💻 Local</span>
+          <span className="badge active">Agent Active</span>
+        </div>
+
       </header>
 
-      <main className="dashboard-main">
-        {/* Modernized Chat Section */}
-        <section className="interaction-panel card">
-          <div className="chat-window">
-            <h3>Interactive Research Assistant</h3>
-            <div className="message-list">
-              {messages.length === 0 && (
-                <div className="welcome-prompt">
-                  Query the archive to begin deep reasoning (e.g., "What is the SMT temp for MoS2?").
-                </div>
-              )}
-              {messages.map((msg, i) => (
-                <div key={i} className={`chat-bubble ${msg.role}`}>
-                  <div className="bubble-content">
-                    <strong>{msg.role === 'user' ? 'You' : 'AI Assistant'}:</strong>
-                    <p>{msg.content}</p>
-                  </div>
-                </div>
-              ))}
-              {loading && <div className="typing-indicator">Assistant is reasoning...</div>}
-              <div ref={chatEndRef} />
-            </div>
+      <div className="layout">
 
-            <div className="input-box">
-              <input 
-                type="text" 
-                placeholder="Ask follow-up questions or new specs..." 
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-              />
-              <button onClick={handleSendMessage} disabled={loading}>
-                {loading ? '...' : 'Send'}
-              </button>
-            </div>
-          </div>
-        </section>
+        {/* CHAT PANEL */}
 
-        {/* Automated Parameter Table */}
-        <section className="parameter-panel card">
-          <h3>Automated Parameter Table</h3>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Hardware Module</th>
-                  <th>Extracted Parameters</th>
-                  <th>Source</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tableData.length > 0 ? tableData.map((res, index) => (
-                  <tr key={index}>
-                    <td><strong>{res.hardware || "N/A"}</strong></td>
-                    <td>{res.content.substring(0, 150)}...</td>
-                    <td><span className="source-tag">{res.source}</span><br/>(Pg {res.pages})</td>
-                  </tr>
-                )) : (
-                  <tr><td colSpan="3" className="no-data">Archive data will appear here.</td></tr>
-                )}
-              </tbody>
-            </table>
+        <div className="chat-panel">
+
+          <div className="panel-title">🤖 Research Agent</div>
+
+          <div className="chat-box">
+
+            {messages.length === 0 && (
+              <div className="welcome">
+                Ask something like:
+                <div className="hint">
+                  Compare SMT temp of MoS2 across docs
+                </div>
+              </div>
+            )}
+
+            {messages.map((msg, i) => (
+
+              <div key={i} className={`message ${msg.role}`}>
+                {msg.content}
+              </div>
+
+            ))}
+
+            {isThinking && (
+              <div className="thinking">
+                <div className="dots">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                Agent reasoning over documents...
+              </div>
+            )}
+
+            <div ref={chatEndRef} />
+
           </div>
-        </section>
-      </main>
+
+          <div className="input-area">
+
+            <input
+              value={input}
+              placeholder="Ask the research agent..."
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+            />
+
+            <button
+              onClick={handleSendMessage}
+              disabled={isThinking}
+            >
+              Run
+            </button>
+
+          </div>
+
+        </div>
+
+
+        {/* INSIGHTS PANEL */}
+
+        <div className="data-panel">
+
+          <div className="panel-title">Extracted Insights</div>
+
+          {loadingInsights && (
+            <div className="loading-insights">
+              Searching documents...
+            </div>
+          )}
+
+          <div className="results">
+
+            {tableData.length === 0 && !loadingInsights && (
+              <div className="no-data">
+                Awaiting query...
+              </div>
+            )}
+
+            {tableData.map((res, i) => (
+
+              <div
+                className="result-card"
+                key={i}
+                onClick={() => openDocument(res)}
+              >
+
+                <div className="hardware">
+                  {res.hardware || "General"}
+                </div>
+
+                <div className="content">
+                  {res.content.substring(0, 150)}...
+                </div>
+
+                <div className="source">
+                  {res.source} • Pg {res.pages}
+                </div>
+
+              </div>
+
+            ))}
+
+          </div>
+
+        </div>
+
+      </div>
+
+      <footer className="footer">
+        Local Agentic RAG System
+      </footer>
+
     </div>
+
   );
-};
+
+}
 
 export default App;
