@@ -4,104 +4,149 @@ import "./App.css";
 
 function App() {
 
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState("");
-  const [tableData, setTableData] = useState([]);
-  const [isThinking, setIsThinking] = useState(false);
-  const [loadingInsights, setLoadingInsights] = useState(false);
+  const [threads,setThreads] = useState([]);
+  const [activeThread,setActiveThread] = useState(null);
+  const [messages,setMessages] = useState([]);
+  const [input,setInput] = useState("");
+  const [tableData,setTableData] = useState([]);
+  const [isThinking,setIsThinking] = useState(false);
+  const [loadingInsights,setLoadingInsights] = useState(false);
 
   const chatEndRef = useRef(null);
 
   const scrollToBottom = () => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    chatEndRef.current?.scrollIntoView({behavior:"smooth"});
   };
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, isThinking]);
+  useEffect(()=>{scrollToBottom()},[messages]);
+
+  useEffect(()=>{
+
+ const defaultThread = {
+   _id: "local-thread",
+   title: "Research Thread",
+   messages: []
+ }
+
+ setThreads([defaultThread])
+ setActiveThread(defaultThread._id)
+
+},[])
+
+  const selectThread = (thread) => {
+    setActiveThread(thread._id)
+    setMessages(thread.messages || [])
+  }
+
+  const createThread = async () => {
+
+    const res = await axios.post("http://localhost:8000/threads")
+
+    const newThread = {
+      _id: res.data.thread_id,
+      title: "New Chat",
+      messages: []
+    }
+
+    setThreads([newThread,...threads])
+    setActiveThread(newThread._id)
+    setMessages([])
+
+  }
 
   const openDocument = (doc) => {
 
-  // Extract document number (doc4, doc10, etc.)
-  const match = doc.source.match(/doc\d+/);
+    const match = doc.source.match(/doc\d+/)
+    if(!match) return
 
-  if (!match) return;
+    const docId = match[0]
 
-  const docId = match[0];
+    const pdfMap = {
+      doc1:"doc1_cooling_sspa.pdf",
+      doc2:"doc2_weapon_params.pdf",
+      doc3:"doc3_rf_fingerprinting.pdf",
+      doc4:"doc4_ugv_navigation.pdf",
+      doc5:"doc5_rf_microwave_trends.pdf",
+      doc6:"doc6_digital_twin.pdf",
+      doc7:"doc7_defence_ecosystem.pdf",
+      doc8:"doc8_brain_computer.pdf",
+      doc9:"doc9_bio_toxins.pdf",
+      doc10:"doc10_aircraft_aerodynamics.pdf"
+    }
 
-  const pdfMap = {
-    doc1: "doc1_cooling_sspa.pdf",
-    doc2: "doc2_weapon_params.pdf",
-    doc3: "doc3_rf_fingerprinting.pdf",
-    doc4: "doc4_ugv_navigation.pdf",
-    doc5: "doc5_rf_microwave_trends.pdf",
-    doc6: "doc6_digital_twin.pdf",
-    doc7: "doc7_defence_ecosystem.pdf",
-    doc8: "doc8_brain_computer.pdf",
-    doc9: "doc9_bio_toxins.pdf",
-    doc10: "doc10_aircraft_aerodynamics.pdf"
-  };
+    const file = pdfMap[docId]
 
-  const filename = pdfMap[docId];
+    if(!file) return
 
-  if (!filename) return;
+    const url = `http://localhost:8000/docs/${file}#page=${doc.pages}`
 
-  const url = `http://localhost:8000/docs/${filename}#page=${doc.pages}`;
+    window.open(url,"_blank")
 
-  window.open(url, "_blank");
-
-};
+  }
 
   const handleSendMessage = async () => {
 
-    if (!input.trim()) return;
+    if(!input.trim()) return
 
-    const userMessage = { role: "user", content: input };
-    const updatedHistory = [...messages, userMessage];
+    const userMessage = {role:"user",content:input}
 
-    setMessages(updatedHistory);
-    setInput("");
+    const updatedMessages = [...messages,userMessage]
 
-    setIsThinking(true);
-    setLoadingInsights(true);
+    setMessages(updatedMessages)
+    setInput("")
+    setIsThinking(true)
+    setLoadingInsights(true)
+    setTableData([])
 
-    setTableData([]); // clear previous results
+    await axios.post(
+      `http://localhost:8000/threads/${activeThread}/message`,
+      userMessage
+    )
 
-    try {
+    try{
 
       const searchRes = await axios.get(
         `http://localhost:8000/search?q=${input}`
-      );
+      )
 
-      setTableData(searchRes.data.results);
+      setTableData(searchRes.data.results)
 
       const chatRes = await axios.post(
-        `http://localhost:8000/chat`,
-        { messages: updatedHistory }
-      );
+        "http://localhost:8000/chat",
+        {messages:updatedMessages}
+      )
 
-      setMessages(prev => [
-        ...prev,
-        { role: "assistant", content: chatRes.data.answer }
-      ]);
+      const aiMessage = {
+        role:"assistant",
+        content:chatRes.data.answer
+      }
 
-    } catch (error) {
+      const finalMessages = [...updatedMessages,aiMessage]
 
-      setMessages(prev => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "System error: Local AI node unavailable."
-        }
-      ]);
+      setMessages(finalMessages)
 
-    } finally {
-
-      setIsThinking(false);
-      setLoadingInsights(false);
+      await axios.post(
+        `http://localhost:8000/threads/${activeThread}/message`,
+        aiMessage
+      )
 
     }
-  };
+    catch(e){
+
+      setMessages([
+        ...updatedMessages,
+        {role:"assistant",content:"System error."}
+      ])
+
+    }
+    finally{
+
+      setIsThinking(false)
+      setLoadingInsights(false)
+
+    }
+
+  }
 
   return (
 
@@ -109,41 +154,58 @@ function App() {
 
       <header className="topbar">
 
-        <div className="logo">TechArchive AI</div>
+        <div className="logo">
+          TechArchive AI
+        </div>
 
-        <div className="badges">
-          <span className="badge">🧠 Llama 3.2</span>
-          <span className="badge">💻 Local</span>
-          <span className="badge active">Agent Active</span>
+        <div className="subtitle">
+          Defense Research Intelligence Platform
         </div>
 
       </header>
 
       <div className="layout">
 
-        {/* CHAT PANEL */}
+        {/* THREADS */}
+
+        <div className="sidebar">
+
+          <button
+            className="new-chat"
+            onClick={createThread}
+          >
+            + New Chat
+          </button>
+
+          {threads.map(thread=>(
+            <div
+              key={thread._id}
+              className={
+                activeThread===thread._id
+                ? "thread active"
+                : "thread"
+              }
+              onClick={()=>selectThread(thread)}
+            >
+              {thread.title || "Research Thread"}
+            </div>
+          ))}
+
+        </div>
+
+        {/* CHAT */}
 
         <div className="chat-panel">
 
-          <div className="panel-title">🤖 Research Agent</div>
-
           <div className="chat-box">
 
-            {messages.length === 0 && (
-              <div className="welcome">
-                Ask something like:
-                <div className="hint">
-                  Compare SMT temp of MoS2 across docs
-                </div>
-              </div>
-            )}
-
-            {messages.map((msg, i) => (
-
-              <div key={i} className={`message ${msg.role}`}>
+            {messages.map((msg,i)=>(
+              <div
+                key={i}
+                className={`message ${msg.role}`}
+              >
                 {msg.content}
               </div>
-
             ))}
 
             {isThinking && (
@@ -153,11 +215,11 @@ function App() {
                   <span></span>
                   <span></span>
                 </div>
-                Agent reasoning over documents...
+                Agent reasoning...
               </div>
             )}
 
-            <div ref={chatEndRef} />
+            <div ref={chatEndRef}></div>
 
           </div>
 
@@ -166,13 +228,14 @@ function App() {
             <input
               value={input}
               placeholder="Ask the research agent..."
-              onChange={(e) => setInput(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+              onChange={(e)=>setInput(e.target.value)}
+              onKeyDown={(e)=>{
+                if(e.key==="Enter") handleSendMessage()
+              }}
             />
 
             <button
               onClick={handleSendMessage}
-              disabled={isThinking}
             >
               Run
             </button>
@@ -181,33 +244,25 @@ function App() {
 
         </div>
 
+        {/* INSIGHTS */}
 
-        {/* INSIGHTS PANEL */}
+        <div className="insights-panel">
 
-        <div className="data-panel">
+          <h3>Extracted Insights</h3>
 
-          <div className="panel-title">Extracted Insights</div>
-
-          {loadingInsights && (
-            <div className="loading-insights">
+          {loadingInsights &&
+            <div className="loading">
               Searching documents...
             </div>
-          )}
+          }
 
           <div className="results">
 
-            {tableData.length === 0 && !loadingInsights && (
-              <div className="no-data">
-                Awaiting query...
-              </div>
-            )}
-
-            {tableData.map((res, i) => (
-
+            {tableData.map((res,i)=>(
               <div
-                className="result-card"
                 key={i}
-                onClick={() => openDocument(res)}
+                className="result-card"
+                onClick={()=>openDocument(res)}
               >
 
                 <div className="hardware">
@@ -215,7 +270,7 @@ function App() {
                 </div>
 
                 <div className="content">
-                  {res.content.substring(0, 150)}...
+                  {res.content.substring(0,140)}...
                 </div>
 
                 <div className="source">
@@ -223,7 +278,6 @@ function App() {
                 </div>
 
               </div>
-
             ))}
 
           </div>
@@ -232,14 +286,10 @@ function App() {
 
       </div>
 
-      <footer className="footer">
-        Local Agentic RAG System
-      </footer>
-
     </div>
 
-  );
+  )
 
 }
 
-export default App;
+export default App
