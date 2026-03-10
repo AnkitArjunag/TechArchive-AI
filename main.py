@@ -1,15 +1,15 @@
-import os
 import requests # type: ignore
-from fastapi import FastAPI, HTTPException # type: ignore #
-from fastapi.middleware.cors import CORSMiddleware # type: ignore #
+from fastapi import FastAPI, HTTPException # type: ignore
+from fastapi.middleware.cors import CORSMiddleware # type: ignore
 from pydantic import BaseModel # type: ignore
 from typing import List
-import chromadb # type: ignore #
+import chromadb # type: ignore
 
-# 1. Initialize the FastAPI app BEFORE defining routes
+# ----------------------------------------------------
+# FastAPI Setup
+# ----------------------------------------------------
 app = FastAPI()
 
-# 2. Configure CORS so your React frontend can communicate
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,95 +17,155 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 3. Initialize ChromaDB
+# ----------------------------------------------------
+# ChromaDB
+# ----------------------------------------------------
 client = chromadb.PersistentClient(path="./techarchive_db")
 collection = client.get_or_create_collection(name="defense_research")
 
-# 4. Define Data Models for Multi-turn Chat
+# ----------------------------------------------------
+# Data Models
+# ----------------------------------------------------
 class Message(BaseModel):
-    role: str  # 'user' or 'assistant'
+    role: str
     content: str
+
 
 class ChatRequest(BaseModel):
     messages: List[Message]
 
-# 5. Define Routes (Now 'app' is defined and safe to use)
+
+# ----------------------------------------------------
+# Retrieval Function
+# ----------------------------------------------------
+def retrieve_chunks(query: str):
+
+    results = collection.query(
+        query_texts=[query],
+        n_results=8   # slightly higher recall
+    )
+
+    # Debugging output (very useful)
+    print("\n==== RETRIEVED CHUNKS ====")
+
+    for i, doc in enumerate(results["documents"][0]):
+        print(f"\nChunk {i+1}")
+        print(doc[:250])
+
+    return results
+
+
+# ----------------------------------------------------
+# Chat Endpoint
+# ----------------------------------------------------
 @app.post("/chat")
 async def chat_with_archive(request: ChatRequest):
+
     try:
-        # 1. Retrieve the same data that populated your table
         user_query = request.messages[-1].content
-        results = collection.query(query_texts=[user_query], n_results=10)
-        
-        # 2. Format the context with clear Source/Page markers
+
+        # Retrieve relevant chunks
+        results = retrieve_chunks(user_query)
+
+        # ✅ FIXED: do NOT index twice
+        docs = results["documents"][0]
+        metas = results["metadatas"][0]
+
+        # Only send top 4 chunks to LLM
+        docs = docs[:4]
+        metas = metas[:4]
+
         context_parts = []
-        for doc, meta in zip(results['documents'][0], results['metadatas'][0]):
-            source_info = f"[SOURCE: {meta.get('source')} | PAGE: {meta.get('pages')}]"
-            context_parts.append(f"{source_info}\n{doc}")
-        
+
+        for doc, meta in zip(docs, metas):
+
+            source = meta.get("source", "unknown")
+            pages = meta.get("pages", "N/A")
+
+            context_parts.append(
+                f"[SOURCE: {source} | PAGE: {pages}]\n{doc}"
+            )
+
         knowledge_base = "\n\n---\n\n".join(context_parts)
 
-        # 3. Enhanced Reasoning Prompt for local LLMs
-        system_instruction = f"""
-        [ROLE: DEFENSE ENGINEERING ASSISTANT]
-        You must answer using ONLY the 'KNOWLEDGE BASE' below. 
-        
-        KNOWLEDGE BASE:
-        {knowledge_base}
-        
-        RULES:
-        1. If the query asks for a value (like SMT temp or CFO), search the KNOWLEDGE BASE for it.
-        2. If found, report the value and the [SOURCE/PAGE] exactly.
-        3. If NOT found, say "I cannot find specific data for [Query] in the current archive."
-        """
+        # ------------------------------------------------
+        # Prompt for Local LLM
+        # ------------------------------------------------
+        system_prompt = f"""
+You are a defense engineering research assistant.
 
-        # 4. Construct the conversation string
-        full_prompt = system_instruction + "\n\n"
+Answer the question using ONLY the context below.
+
+CONTEXT:
+{knowledge_base}
+
+Rules:
+- Extract the answer directly from the context.
+- Include the SOURCE and PAGE.
+- Do NOT say the answer is missing if it exists.
+- If the answer truly does not exist, say:
+"I cannot find this information in the archive."
+"""
+
+        # Build conversation
+        prompt = system_prompt + "\n\n"
+
         for msg in request.messages:
-            full_prompt += f"{msg.role.upper()}: {msg.content}\n"
-        full_prompt += "ASSISTANT:"
+            prompt += f"{msg.role.upper()}: {msg.content}\n"
 
-        # 5. Call local Ollama (ensure gemma:2b is running)
+        prompt += "ASSISTANT:"
+
+        # ------------------------------------------------
+        # Call Ollama
+        # ------------------------------------------------
         response = requests.post(
             "http://localhost:11434/api/generate",
-            json={"model": "gemma:2b", "prompt": full_prompt, "stream": False}
+            json={
+                "model": "llama3.2:3b",
+                "prompt": prompt,
+                "stream": False,
+                "temperature": 0.2
+            },
+            timeout=120
         )
-        
-        return {"answer": response.json().get("response")}
+
+        return {"answer": response.json().get("response", "")}
 
     except Exception as e:
-        print(f"Reasoning Error: {e}")
-        raise HTTPException(status_code=500, detail="Intelligence Hub encountered a reasoning error.")
-    
+        print("RAG ERROR:", e)
+        raise HTTPException(status_code=500, detail="Chat processing failed")
+
+
+# ----------------------------------------------------
+# Search Endpoint (Parameter Table)
+# ----------------------------------------------------
 @app.get("/search")
 async def search_archive(q: str):
-    """
-    Retrieves technical chunks for the Automated Parameter Table.
-    """
+
     try:
-        # 1. Query ChromaDB for the top 5 relevant technical segments
         results = collection.query(query_texts=[q], n_results=5)
-        
+
         formatted_results = []
-        
-        # 2. Iterate through documents and their associated metadata
-        for i in range(len(results['documents'][0])):
-            content = results['documents'][0][i]
-            metadata = results['metadatas'][0][i]
-            
+
+        for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
+
             formatted_results.append({
-                "hardware": metadata.get("hardware", "General Research"), # Extraction for the table
-                "content": content,
-                "source": metadata.get("source", "Unknown Doc"),
-                "pages": metadata.get("pages", "N/A") # Critical for citations
+                "hardware": meta.get("hardware", "General Research"),
+                "content": doc,
+                "source": meta.get("source", "Unknown"),
+                "pages": meta.get("pages", "N/A")
             })
-            
+
         return {"results": formatted_results}
 
     except Exception as e:
-        print(f"Search Error: {e}")
-        return {"results": [], "error": str(e)}
+        print("Search Error:", e)
+        return {"results": []}
 
+
+# ----------------------------------------------------
+# Run Server
+# ----------------------------------------------------
 if __name__ == "__main__":
     import uvicorn # type: ignore
     uvicorn.run(app, host="0.0.0.0", port=8000)
