@@ -1,4 +1,4 @@
-	What accuracy is required at 200 meters for the PTU wheeled UGV?
+What accuracy is required at 200 meters for the PTU wheeled UGV?
 
 What accuracy is required at 100 meters to hit a human target using the UGV weapon system?
 
@@ -8,5 +8,5 @@ What sensors are used in the autonomous 4WD UGV system?
 
 What algorithm is used for localization in the autonomous UGV system?
 
-What algorithm is used for localization in the autonomous UGV system?
+
 

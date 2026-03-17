@@ -8,51 +8,44 @@ function Login() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
 
-    if (!email || !password) {
-      alert("Please fill all fields");
-      return;
-    }
-
     try {
-      setLoading(true);
+      const res = await fetch("http://localhost:8000/api/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ email, password })
+      });
 
-      // 🔥 Replace with your backend later
-      console.log("Login:", { email, password });
+      const data = await res.json();
 
-      // Simulate success
-      setTimeout(() => {
-        localStorage.setItem("token", "demo-token");
-        navigate("/dashboard");
-      }, 800);
+      if (!res.ok) {
+        alert(data.detail || "Invalid credentials");
+        return;
+      }
+
+      localStorage.setItem("token", data.token);
+
+      navigate("/dashboard");
 
     } catch (err) {
       console.error(err);
-      alert("Login failed");
-    } finally {
-      setLoading(false);
+      alert("Server error");
     }
   };
 
   return (
     <div className="auth-container">
-
       <div className="auth-card">
 
         <h1 className="auth-title">TechArchive AI</h1>
-
         <h2>Login</h2>
 
-        <p style={{ textAlign: "center", color: "#6b7280", fontSize: "13px" }}>
-          Secure Research Access
-        </p>
-
         <form onSubmit={handleLogin}>
-
           <input
             type="email"
             placeholder="Email"
@@ -69,10 +62,7 @@ function Login() {
             className="auth-input"
           />
 
-          <button className="auth-button" disabled={loading}>
-            {loading ? "Logging in..." : "Login"}
-          </button>
-
+          <button className="auth-button">Login</button>
         </form>
 
         <p className="auth-footer">
@@ -80,7 +70,6 @@ function Login() {
         </p>
 
       </div>
-
     </div>
   );
 }

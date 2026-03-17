@@ -1,16 +1,27 @@
-import requests # type: ignore
-from fastapi import FastAPI, HTTPException # type: ignore
-from fastapi.middleware.cors import CORSMiddleware # type: ignore
-from pydantic import BaseModel # type: ignore
+import requests
+from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from typing import List
-import chromadb # type: ignore
-from fastapi.staticfiles import StaticFiles # type: ignore
+import chromadb
+from fastapi.staticfiles import StaticFiles
+from pymongo import MongoClient
+from bson import ObjectId
+import jwt
+import bcrypt
+
+# ----------------------------------------------------
+# CONFIG
+# ----------------------------------------------------
+SECRET_KEY = "secret123"
+ALGORITHM = "HS256"
+
+MONGO_URI = "mongodb+srv://arjunagiankit141:Ankit12112003@ankit.r17ffqd.mongodb.net/?appName=Ankit"
 
 # ----------------------------------------------------
 # FastAPI Setup
 # ----------------------------------------------------
 app = FastAPI()
-
 
 app.mount(
     "/docs",
@@ -26,13 +37,22 @@ app.add_middleware(
 )
 
 # ----------------------------------------------------
-# ChromaDB
+# MongoDB Setup
 # ----------------------------------------------------
-client = chromadb.PersistentClient(path="./techarchive_db")
-collection = client.get_or_create_collection(name="defense_research")
+client = MongoClient(MONGO_URI)
+db = client["BEL"]
+
+users_collection = db["users"]
+threads_collection = db["threads"]
 
 # ----------------------------------------------------
-# Data Models
+# ChromaDB
+# ----------------------------------------------------
+chroma_client = chromadb.PersistentClient(path="./techarchive_db")
+collection = chroma_client.get_or_create_collection(name="defense_research")
+
+# ----------------------------------------------------
+# Models
 # ----------------------------------------------------
 class Message(BaseModel):
     role: str
@@ -43,79 +63,192 @@ class ChatRequest(BaseModel):
     messages: List[Message]
 
 
+class User(BaseModel):
+    name: str
+    email: str
+    password: str
+
+
+class Login(BaseModel):
+    email: str
+    password: str
+
 # ----------------------------------------------------
-# Retrieval Function
+# AUTH HELPERS
+# ----------------------------------------------------
+def create_token(user_id):
+    return jwt.encode(
+        {"user_id": str(user_id)},
+        SECRET_KEY,
+        algorithm=ALGORITHM
+    )
+
+
+def get_current_user(request: Request):
+    try:
+        auth = request.headers.get("Authorization")
+
+        if not auth:
+            raise HTTPException(status_code=401, detail="No token provided")
+
+        token = auth.split(" ")[1]
+
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+        return payload["user_id"]
+
+    except Exception as e:
+        print("AUTH ERROR:", e)
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+# ----------------------------------------------------
+# AUTH ROUTES
+# ----------------------------------------------------
+@app.post("/api/register")
+def register(user: User):
+
+    if users_collection.find_one({"email": user.email}):
+        raise HTTPException(status_code=400, detail="User already exists")
+
+    hashed_pw = bcrypt.hashpw(
+        user.password.encode("utf-8"),
+        bcrypt.gensalt()
+    )
+
+    new_user = {
+        "name": user.name,
+        "email": user.email,
+        "password": hashed_pw.decode("utf-8")
+    }
+
+    result = users_collection.insert_one(new_user)
+
+    token = create_token(result.inserted_id)
+
+    return {"token": token}
+
+
+@app.post("/api/login")
+def login(data: Login):
+
+    user = users_collection.find_one({"email": data.email})
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    stored_password = user["password"].encode("utf-8")
+
+    if not bcrypt.checkpw(
+        data.password.encode("utf-8"),
+        stored_password
+    ):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = create_token(user["_id"])
+
+    return {"token": token}
+
+# ----------------------------------------------------
+# THREADS
+# ----------------------------------------------------
+@app.get("/threads")
+def get_threads(user_id=Depends(get_current_user)):
+
+    threads = list(threads_collection.find({"user_id": user_id}))
+
+    for t in threads:
+        t["_id"] = str(t["_id"])
+
+    return {"threads": threads}
+
+
+@app.post("/threads")
+def create_thread(user_id=Depends(get_current_user)):
+
+    new_thread = {
+        "user_id": user_id,
+        "title": "New Chat",
+        "messages": []
+    }
+
+    result = threads_collection.insert_one(new_thread)
+
+    return {"thread_id": str(result.inserted_id)}
+
+
+@app.post("/threads/{thread_id}/message")
+def add_message(thread_id: str, message: Message, user_id=Depends(get_current_user)):
+
+    if not ObjectId.is_valid(thread_id):
+        raise HTTPException(status_code=400, detail="Invalid thread ID")
+
+    threads_collection.update_one(
+        {"_id": ObjectId(thread_id)},
+        {"$push": {"messages": message.dict()}}
+    )
+
+    return {"status": "ok"}
+
+# ----------------------------------------------------
+# RAG RETRIEVAL
 # ----------------------------------------------------
 def retrieve_chunks(query: str):
 
     results = collection.query(
         query_texts=[query],
-        n_results=8   # slightly higher recall
+        n_results=8
     )
-
-    # Debugging output (very useful)
-    print("\n==== RETRIEVED CHUNKS ====")
-
-    for i, doc in enumerate(results["documents"][0]):
-        print(f"\nChunk {i+1}")
-        print(doc[:250])
 
     return results
 
-
 # ----------------------------------------------------
-# Chat Endpoint
+# CHAT (FIXED ✅)
 # ----------------------------------------------------
 @app.post("/chat")
-async def chat_with_archive(request: ChatRequest):
+def chat_with_archive(request: ChatRequest):
 
     try:
         user_query = request.messages[-1].content
 
-        # Retrieve relevant chunks
         results = retrieve_chunks(user_query)
 
-        # ✅ FIXED: do NOT index twice
-        docs = results["documents"][0]
-        metas = results["metadatas"][0]
-
-        # Only send top 4 chunks to LLM
-        docs = docs[:4]
-        metas = metas[:4]
+        docs = results.get("documents", [[]])[0][:4]
+        metas = results.get("metadatas", [[]])[0][:4]
 
         context_parts = []
+        insights = []
 
         for doc, meta in zip(docs, metas):
-
-            source = meta.get("source", "unknown")
-            pages = meta.get("pages", "N/A")
+            source = meta.get("source", "doc1")
+            page = meta.get("pages") or meta.get("page") or 1
 
             context_parts.append(
-                f"[SOURCE: {source} | PAGE: {pages}]\n{doc}"
+                f"[SOURCE: {source} | PAGE: {page}]\n{doc}"
             )
+
+            # ✅ THIS IS THE FIX
+            insights.append({
+                "content": doc,
+                "source": source,
+                "page": page
+            })
 
         knowledge_base = "\n\n---\n\n".join(context_parts)
 
-        # ------------------------------------------------
-        # Prompt for Local LLM
-        # ------------------------------------------------
         system_prompt = f"""
 You are a defense engineering research assistant.
 
-Answer the question using ONLY the context below.
+Answer using ONLY context.
 
+STRICT RULES:
+- Answer ONLY from provided context.
+- If context does not contain answer → say "Not available in documents".
+- Do NOT generate or assume anything outside context.
+- Do NOT refuse unless explicitly harmful.
 CONTEXT:
 {knowledge_base}
-
-Rules:
-- Extract the answer directly from the context.
-- Include the SOURCE and PAGE.
-- Do NOT say the answer is missing if it exists.
-- If the answer truly does not exist, say:
-"I cannot find this information in the archive."
 """
 
-        # Build conversation
         prompt = system_prompt + "\n\n"
 
         for msg in request.messages:
@@ -123,57 +256,61 @@ Rules:
 
         prompt += "ASSISTANT:"
 
-        # ------------------------------------------------
-        # Call Ollama
-        # ------------------------------------------------
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
                 "model": "llama3.2:3b",
                 "prompt": prompt,
-                "stream": False,
-                "temperature": 0.2
-            },
-            timeout=300
+                "stream": False
+            }
         )
 
-        return {"answer": response.json().get("response", "")}
+        return {
+            "answer": response.json().get("response", ""),
+            "insights": insights   # ✅ NOW FRONTEND WILL WORK
+        }
 
     except Exception as e:
         print("RAG ERROR:", e)
-        raise HTTPException(status_code=500, detail="Chat processing failed")
-
+        raise HTTPException(status_code=500, detail="Chat failed")
 
 # ----------------------------------------------------
-# Search Endpoint (Parameter Table)
+# SEARCH
 # ----------------------------------------------------
 @app.get("/search")
-async def search_archive(q: str):
+def search_archive(q: str):
 
     try:
-        results = collection.query(query_texts=[q], n_results=5)
+        results = collection.query(
+            query_texts=[q],
+            n_results=5
+        )
 
-        formatted_results = []
+        docs = results.get("documents", [[]])[0]
+        metas = results.get("metadatas", [[]])[0]
 
-        for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
+        formatted = []
 
-            formatted_results.append({
-                "hardware": meta.get("hardware", "General Research"),
+        for i, (doc, meta) in enumerate(zip(docs, metas)):
+
+            page = meta.get("pages") or meta.get("page") or 1
+
+            formatted.append({
+                "hardware": meta.get("hardware", "General"),
                 "content": doc,
-                "source": meta.get("source", "Unknown"),
-                "pages": meta.get("pages", "N/A")
+                "source": meta.get("source", f"doc{i+1}"),
+                "pages": page
             })
 
-        return {"results": formatted_results}
+        return {"results": formatted}
 
     except Exception as e:
         print("Search Error:", e)
         return {"results": []}
 
-
 # ----------------------------------------------------
-# Run Server
+# RUN
 # ----------------------------------------------------
 if __name__ == "__main__":
-    import uvicorn # type: ignore
+    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
