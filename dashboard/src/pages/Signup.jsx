@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import "../App.css";
 
 function Signup() {
 
@@ -8,8 +9,9 @@ function Signup() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSignup = (e) => {
+  const handleSignup = async (e) => {
     e.preventDefault();
 
     if (!name || !email || !password) {
@@ -17,20 +19,37 @@ function Signup() {
       return;
     }
 
-    console.log("Signup Data:", {
-      name,
-      email,
-      password
-    });
+    if (!email.includes("@")) {
+      alert("Enter a valid email");
+      return;
+    }
 
-    // Backend will be connected later
-    alert("Signup successful (backend not connected yet)");
+    if (password.length < 6) {
+      alert("Password must be at least 6 characters");
+      return;
+    }
 
-    navigate("/dashboard");
+    try {
+      setLoading(true);
+
+      // 🔥 Replace with backend later
+      console.log("Signup:", { name, email, password });
+
+      // Simulate success
+      setTimeout(() => {
+        localStorage.setItem("token", "demo-token");
+        navigate("/dashboard");
+      }, 800);
+
+    } catch (err) {
+      console.error(err);
+      alert("Signup failed");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-
     <div className="auth-container">
 
       <div className="auth-card">
@@ -38,6 +57,10 @@ function Signup() {
         <h1 className="auth-title">TechArchive AI</h1>
 
         <h2>Create Account</h2>
+
+        <p style={{ textAlign: "center", color: "#6b7280", fontSize: "13px" }}>
+          Start your research journey
+        </p>
 
         <form onSubmit={handleSignup}>
 
@@ -65,8 +88,8 @@ function Signup() {
             className="auth-input"
           />
 
-          <button className="auth-button">
-            Sign Up
+          <button className="auth-button" disabled={loading}>
+            {loading ? "Creating..." : "Sign Up"}
           </button>
 
         </form>
@@ -78,9 +101,7 @@ function Signup() {
       </div>
 
     </div>
-
   );
-
 }
 
 export default Signup;

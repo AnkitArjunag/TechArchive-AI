@@ -1,19 +1,41 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import "../App.css";
 
 function Login() {
 
-  const navigate = useNavigate();   // ✅ Hook must be inside component
+  const navigate = useNavigate();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
 
-    console.log(email, password);
+    if (!email || !password) {
+      alert("Please fill all fields");
+      return;
+    }
 
-    navigate("/dashboard");
+    try {
+      setLoading(true);
+
+      // 🔥 Replace with your backend later
+      console.log("Login:", { email, password });
+
+      // Simulate success
+      setTimeout(() => {
+        localStorage.setItem("token", "demo-token");
+        navigate("/dashboard");
+      }, 800);
+
+    } catch (err) {
+      console.error(err);
+      alert("Login failed");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -24,6 +46,10 @@ function Login() {
         <h1 className="auth-title">TechArchive AI</h1>
 
         <h2>Login</h2>
+
+        <p style={{ textAlign: "center", color: "#6b7280", fontSize: "13px" }}>
+          Secure Research Access
+        </p>
 
         <form onSubmit={handleLogin}>
 
@@ -43,8 +69,8 @@ function Login() {
             className="auth-input"
           />
 
-          <button className="auth-button">
-            Login
+          <button className="auth-button" disabled={loading}>
+            {loading ? "Logging in..." : "Login"}
           </button>
 
         </form>
