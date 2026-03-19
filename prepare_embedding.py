@@ -1,6 +1,6 @@
 import json
 import os
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer # type: ignore
 
 # Load embedding model
 model = SentenceTransformer("all-MiniLM-L6-v2")
