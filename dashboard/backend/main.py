@@ -194,15 +194,16 @@ def add_message(thread_id: str, message: Message, user_id=Depends(get_current_us
 # ----------------------------------------------------
 def retrieve_chunks(query: str):
 
+    # 🔥 Increased retrieval size
     results = collection.query(
         query_texts=[query],
-        n_results=8
+        n_results=20
     )
 
     return results
 
 # ----------------------------------------------------
-# CHAT (FIXED ✅)
+# CHAT (FINAL FIXED)
 # ----------------------------------------------------
 @app.post("/chat")
 def chat_with_archive(request: ChatRequest):
@@ -210,23 +211,35 @@ def chat_with_archive(request: ChatRequest):
     try:
         user_query = request.messages[-1].content
 
+        print("\nUSER QUERY:", user_query)
+
         results = retrieve_chunks(user_query)
 
-        docs = results.get("documents", [[]])[0][:4]
-        metas = results.get("metadatas", [[]])[0][:4]
+        docs = results.get("documents", [[]])[0]
+        metas = results.get("metadatas", [[]])[0]
+
+        print("DOCS FOUND:", len(docs))
+
+        # ❌ If no docs → early return
+        if not docs:
+            return {
+                "answer": "Not available in documents.",
+                "insights": []
+            }
 
         context_parts = []
         insights = []
 
-        for doc, meta in zip(docs, metas):
-            source = meta.get("source", "doc1")
+        # 🔥 Take top 6 (not too small)
+        for doc, meta in zip(docs[:6], metas[:6]):
+
+            source = meta.get("source", "doc")
             page = meta.get("pages") or meta.get("page") or 1
 
             context_parts.append(
                 f"[SOURCE: {source} | PAGE: {page}]\n{doc}"
             )
 
-            # ✅ THIS IS THE FIX
             insights.append({
                 "content": doc,
                 "source": source,
@@ -238,13 +251,10 @@ def chat_with_archive(request: ChatRequest):
         system_prompt = f"""
 You are a defense engineering research assistant.
 
-Answer using ONLY context.
+Answer ONLY using the context below.
+If the answer is not present, say:
+"Not available in documents."
 
-STRICT RULES:
-- Answer ONLY from provided context.
-- If context does not contain answer → say "Not available in documents".
-- Do NOT generate or assume anything outside context.
-- Do NOT refuse unless explicitly harmful.
 CONTEXT:
 {knowledge_base}
 """
@@ -265,9 +275,11 @@ CONTEXT:
             }
         )
 
+        answer = response.json().get("response", "")
+
         return {
-            "answer": response.json().get("response", ""),
-            "insights": insights   # ✅ NOW FRONTEND WILL WORK
+            "answer": answer,
+            "insights": insights
         }
 
     except Exception as e:
@@ -283,7 +295,7 @@ def search_archive(q: str):
     try:
         results = collection.query(
             query_texts=[q],
-            n_results=5
+            n_results=10
         )
 
         docs = results.get("documents", [[]])[0]
