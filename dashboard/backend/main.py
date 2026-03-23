@@ -1,17 +1,17 @@
-import requests #type: ignore
-from fastapi import FastAPI, HTTPException, Depends, Request #type: ignore
-from fastapi.middleware.cors import CORSMiddleware #type: ignore
-from pydantic import BaseModel #type: ignore
+import requests
+from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from typing import List
-from fastapi.staticfiles import StaticFiles #type: ignore
-from pymongo import MongoClient #type: ignore
-from bson import ObjectId #type: ignore
-import jwt #type: ignore
-import bcrypt #type: ignore
+from fastapi.staticfiles import StaticFiles
+from pymongo import MongoClient
+from bson import ObjectId
+import jwt
+import bcrypt
+import json
+import fitz
 
-# 🔥 IMPORT JSON SEARCH
-from search import search
-
+from search import search, refresh_data
 
 # ----------------------------------------------------
 # CONFIG
@@ -20,7 +20,6 @@ SECRET_KEY = "secret123"
 ALGORITHM = "HS256"
 
 MONGO_URI = "mongodb+srv://arjunagiankit141:Ankit12112003@ankit.r17ffqd.mongodb.net/?appName=Ankit"
-
 
 # ----------------------------------------------------
 # FastAPI Setup
@@ -33,13 +32,14 @@ app.mount(
     name="docs"
 )
 
+# 🔥 FIXED CORS (IMPORTANT)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000"],  # 🔥 fix here
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ----------------------------------------------------
 # MongoDB Setup
@@ -50,7 +50,6 @@ db = client["BEL"]
 users_collection = db["users"]
 threads_collection = db["threads"]
 
-
 # ----------------------------------------------------
 # Models
 # ----------------------------------------------------
@@ -58,21 +57,17 @@ class Message(BaseModel):
     role: str
     content: str
 
-
 class ChatRequest(BaseModel):
     messages: List[Message]
-
 
 class User(BaseModel):
     name: str
     email: str
     password: str
 
-
 class Login(BaseModel):
     email: str
     password: str
-
 
 # ----------------------------------------------------
 # AUTH HELPERS
@@ -84,16 +79,14 @@ def create_token(user_id):
         algorithm=ALGORITHM
     )
 
-
 def get_current_user(request: Request):
     try:
         auth = request.headers.get("Authorization")
 
         if not auth:
-            raise HTTPException(status_code=401, detail="No token provided")
+            raise HTTPException(status_code=401, detail="No token")
 
         token = auth.split(" ")[1]
-
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
         return payload["user_id"]
@@ -102,54 +95,57 @@ def get_current_user(request: Request):
         print("AUTH ERROR:", e)
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-
 # ----------------------------------------------------
 # AUTH ROUTES
 # ----------------------------------------------------
 @app.post("/api/register")
 def register(user: User):
+    try:
+        if users_collection.find_one({"email": user.email}):
+            raise HTTPException(status_code=400, detail="User exists")
 
-    if users_collection.find_one({"email": user.email}):
-        raise HTTPException(status_code=400, detail="User already exists")
+        hashed_pw = bcrypt.hashpw(user.password.encode(), bcrypt.gensalt())
 
-    hashed_pw = bcrypt.hashpw(
-        user.password.encode("utf-8"),
-        bcrypt.gensalt()
-    )
+        result = users_collection.insert_one({
+            "name": user.name,
+            "email": user.email,
+            "password": hashed_pw.decode()
+        })
 
-    new_user = {
-        "name": user.name,
-        "email": user.email,
-        "password": hashed_pw.decode("utf-8")
-    }
+        token = create_token(result.inserted_id)
+        return {"token": token}
 
-    result = users_collection.insert_one(new_user)
-
-    token = create_token(result.inserted_id)
-
-    return {"token": token}
+    except Exception as e:
+        print("REGISTER ERROR:", e)
+        raise HTTPException(status_code=500, detail="Register failed")
 
 
 @app.post("/api/login")
 def login(data: Login):
+    try:
+        user = users_collection.find_one({"email": data.email})
 
-    user = users_collection.find_one({"email": data.email})
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        stored_password = user["password"]
 
-    stored_password = user["password"].encode("utf-8")
+        # 🔥 HANDLE STRING/BYTES
+        if isinstance(stored_password, str):
+            stored_password = stored_password.encode()
 
-    if not bcrypt.checkpw(
-        data.password.encode("utf-8"),
-        stored_password
-    ):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        if not bcrypt.checkpw(
+            data.password.encode(),
+            stored_password
+        ):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = create_token(user["_id"])
+        token = create_token(user["_id"])
+        return {"token": token}
 
-    return {"token": token}
-
+    except Exception as e:
+        print("LOGIN ERROR:", e)
+        raise HTTPException(status_code=500, detail="Login failed")
 
 # ----------------------------------------------------
 # THREADS
@@ -168,13 +164,11 @@ def get_threads(user_id=Depends(get_current_user)):
 @app.post("/threads")
 def create_thread(user_id=Depends(get_current_user)):
 
-    new_thread = {
+    result = threads_collection.insert_one({
         "user_id": user_id,
         "title": "New Chat",
         "messages": []
-    }
-
-    result = threads_collection.insert_one(new_thread)
+    })
 
     return {"thread_id": str(result.inserted_id)}
 
@@ -182,19 +176,86 @@ def create_thread(user_id=Depends(get_current_user)):
 @app.post("/threads/{thread_id}/message")
 def add_message(thread_id: str, message: Message, user_id=Depends(get_current_user)):
 
-    if not ObjectId.is_valid(thread_id):
-        raise HTTPException(status_code=400, detail="Invalid thread ID")
+    try:
+        thread = threads_collection.find_one({"_id": ObjectId(thread_id)})
 
-    threads_collection.update_one(
-        {"_id": ObjectId(thread_id)},
-        {"$push": {"messages": message.dict()}}
-    )
+        # 🔥 AUTO TITLE
+        if thread and len(thread["messages"]) == 0:
+            threads_collection.update_one(
+                {"_id": ObjectId(thread_id)},
+                {"$set": {"title": message.content[:40]}}
+            )
 
-    return {"status": "ok"}
+        threads_collection.update_one(
+            {"_id": ObjectId(thread_id)},
+            {"$push": {"messages": message.dict()}}
+        )
 
+        return {"status": "ok"}
+
+    except Exception as e:
+        print("THREAD ERROR:", e)
+        raise HTTPException(status_code=500, detail="Thread error")
+
+
+@app.delete("/threads/{thread_id}")
+def delete_thread(thread_id: str, user_id=Depends(get_current_user)):
+    threads_collection.delete_one({
+        "_id": ObjectId(thread_id),
+        "user_id": user_id
+    })
+    return {"message": "Deleted"}
+
+
+@app.delete("/threads")
+def delete_all_threads(user_id=Depends(get_current_user)):
+    threads_collection.delete_many({"user_id": user_id})
+    return {"message": "All chats deleted"}
 
 # ----------------------------------------------------
-# CHAT (JSON RAG)
+# PDF UPLOAD (FIXED SAFE VERSION)
+# ----------------------------------------------------
+@app.post("/upload-pdf")
+async def upload_pdf(file: UploadFile = File(...)):
+    try:
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer("all-MiniLM-L6-v2")  # 🔥 moved here
+
+        doc = fitz.open(stream=await file.read(), filetype="pdf")
+
+        new_chunks = []
+
+        for page_num, page in enumerate(doc):
+            text = page.get_text()
+
+            for i in range(0, len(text), 500):
+                chunk = text[i:i+500]
+
+                embedding = model.encode(chunk).tolist()
+
+                new_chunks.append({
+                    "content": chunk,
+                    "embedding": embedding,
+                    "source": file.filename,
+                    "page": page_num + 1
+                })
+
+        with open("vector_data.json", "r+", encoding="utf-8") as f:
+            data = json.load(f)
+            data.extend(new_chunks)
+            f.seek(0)
+            json.dump(data, f)
+
+        refresh_data()
+
+        return {"message": "PDF uploaded", "chunks": len(new_chunks)}
+
+    except Exception as e:
+        print("UPLOAD ERROR:", e)
+        raise HTTPException(status_code=500, detail="Upload failed")
+
+# ----------------------------------------------------
+# CHAT (RAG)
 # ----------------------------------------------------
 @app.post("/chat")
 def chat_with_archive(request: ChatRequest):
@@ -202,56 +263,22 @@ def chat_with_archive(request: ChatRequest):
     try:
         user_query = request.messages[-1].content
 
-        print("\nUSER QUERY:", user_query)
-
-        # 🔥 USE JSON SEARCH INSTEAD OF CHROMA
         results = search(user_query)
 
-        print("RESULTS FOUND:", len(results))
-
         if not results:
-            return {
-                "answer": "Not available in documents.",
-                "insights": []
-            }
+            return {"answer": "Not available", "insights": []}
 
-        context_parts = []
-        insights = []
+        context = "\n\n".join([r["content"] for r in results])
 
-        for r in results:
+        prompt = f"""
+Answer ONLY using context.
 
-            source = r.get("source", "doc")
-            page = r.get("page", [])
+Context:
+{context}
 
-            context_parts.append(
-                f"[SOURCE: {source} | PAGE: {page}]\n{r['content']}"
-            )
-
-            insights.append({
-                "content": r["content"],
-                "source": source,
-                "page": page
-            })
-
-        knowledge_base = "\n\n---\n\n".join(context_parts)
-
-        system_prompt = f"""
-You are a defense engineering research assistant.
-
-Answer ONLY using the context below.
-If the answer is not present, say:
-"Not available in documents."
-
-CONTEXT:
-{knowledge_base}
+Question:
+{user_query}
 """
-
-        prompt = system_prompt + "\n\n"
-
-        for msg in request.messages:
-            prompt += f"{msg.role.upper()}: {msg.content}\n"
-
-        prompt += "ASSISTANT:"
 
         response = requests.post(
             "http://localhost:11434/api/generate",
@@ -264,19 +291,25 @@ CONTEXT:
 
         answer = response.json().get("response", "")
 
-        return {
-            "answer": answer,
-            "insights": insights
-        }
+        insights = [
+            {
+                "content": r["content"],
+                "source": r["source"],
+                "page": r["page"]
+            }
+            for r in results
+        ]
+
+        return {"answer": answer, "insights": insights}
 
     except Exception as e:
-        print("ERROR:", e)
+        print("CHAT ERROR:", e)
         raise HTTPException(status_code=500, detail="Chat failed")
-
 
 # ----------------------------------------------------
 # RUN
 # ----------------------------------------------------
 if __name__ == "__main__":
-    import uvicorn #type: ignore
+    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

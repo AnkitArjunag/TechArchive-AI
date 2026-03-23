@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
 import "../App.css";
 
@@ -8,308 +8,196 @@ const Dashboard = () => {
   const [activeThread, setActiveThread] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
-  const [tableData, setTableData] = useState([]);
-  const [isThinking, setIsThinking] = useState(false);
-  const [loadingInsights, setLoadingInsights] = useState(false);
-
-  const chatEndRef = useRef(null);
+  const [insights, setInsights] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   const API = "http://localhost:8000";
   const token = localStorage.getItem("token");
-
-  const scrollToBottom = () => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  const chatEndRef = useRef(null);
 
   useEffect(() => {
-    scrollToBottom();
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // ----------------------------------------------------
-  // FETCH THREADS
-  // ----------------------------------------------------
+  const fetchThreads = useCallback(async () => {
+    const res = await axios.get(`${API}/threads`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    setThreads(res.data.threads);
+
+    if (res.data.threads.length > 0 && !activeThread) {
+      setActiveThread(res.data.threads[0]._id);
+      setMessages(res.data.threads[0].messages || []);
+    }
+  }, [token, activeThread]);
+
   useEffect(() => {
-
-    const fetchThreads = async () => {
-      try {
-
-        const res = await axios.get(`${API}/threads`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-
-        if (res.data.threads.length > 0) {
-          setThreads(res.data.threads);
-          setActiveThread(res.data.threads[0]._id);
-          setMessages(res.data.threads[0].messages || []);
-        } else {
-
-          const newRes = await axios.post(`${API}/threads`, {}, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-
-          const newThread = {
-            _id: newRes.data.thread_id,
-            title: "New Chat",
-            messages: []
-          };
-
-          setThreads([newThread]);
-          setActiveThread(newThread._id);
-          setMessages([]);
-        }
-
-      } catch (err) {
-        console.error("THREAD ERROR:", err);
-      }
-    };
-
     if (token) fetchThreads();
+  }, [token, fetchThreads]);
 
-  }, [token]);
-
-  // ----------------------------------------------------
-  // CREATE THREAD
-  // ----------------------------------------------------
   const createThread = async () => {
-
     const res = await axios.post(`${API}/threads`, {}, {
       headers: { Authorization: `Bearer ${token}` }
     });
 
-    const newThread = {
-      _id: res.data.thread_id,
-      title: "New Chat",
-      messages: []
-    };
-
-    setThreads(prev => [newThread, ...prev]);
-    setActiveThread(newThread._id);
+    setActiveThread(res.data.thread_id);
     setMessages([]);
-    setTableData([]);
+    fetchThreads();
   };
 
-  const selectThread = (thread) => {
-    setActiveThread(thread._id);
-    setMessages(thread.messages || []);
-    setTableData([]);
+  const deleteThread = async (id) => {
+    await axios.delete(`${API}/threads/${id}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    if (id === activeThread) {
+      setActiveThread(null);
+      setMessages([]);
+    }
+
+    fetchThreads();
   };
 
-  // ----------------------------------------------------
-  // OPEN PDF
-  // ----------------------------------------------------
-  const openDocument = (doc) => {
-
-    const match = doc.source.match(/doc\d+/);
-    if (!match) return;
-
-    const docId = match[0];
-
-    const pdfMap = {
-      doc1: "doc1_cooling_sspa.pdf",
-      doc2: "doc2_weapon_params.pdf",
-      doc3: "doc3_rf_fingerprinting.pdf",
-      doc4: "doc4_ugv_navigation.pdf",
-      doc5: "doc5_rf_microwave_trends.pdf",
-      doc6: "doc6_digital_twin.pdf",
-      doc7: "doc7_defence_ecosystem.pdf",
-      doc8: "doc8_brain_computer.pdf",
-      doc9: "doc9_bio_toxins.pdf",
-      doc10: "doc10_aircraft_aerodynamics.pdf"
-    };
-
-    const file = pdfMap[docId];
+  const handleUpload = async (e) => {
+    const file = e.target.files[0];
     if (!file) return;
 
-    const page = Array.isArray(doc.page) ? doc.page[0] : doc.page;
+    const formData = new FormData();
+    formData.append("file", file);
 
-    const url = `http://localhost:8000/docs/${file}#page=${page}`;
-    window.open(url, "_blank");
+    await axios.post(`${API}/upload-pdf`, formData);
+    alert("PDF added!");
   };
 
-  // ----------------------------------------------------
-  // SEND MESSAGE
-  // ----------------------------------------------------
-  const handleSendMessage = async () => {
+  const handleSend = async () => {
 
-    if (!input.trim() || !activeThread) return;
+    if (!input.trim()) return;
 
-    const userMessage = { role: "user", content: input };
-    const updatedMessages = [...messages, userMessage];
+    let threadId = activeThread;
 
-    setMessages(updatedMessages);
-    setInput("");
-    setIsThinking(true);
-    setLoadingInsights(true);
-    setTableData([]);
-
-    try {
-
-      // Save user message
-      await axios.post(
-        `${API}/threads/${activeThread}/message`,
-        userMessage,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      // CALL CHAT
-      const chatRes = await axios.post(`${API}/chat`, {
-        messages: updatedMessages
+    if (!threadId) {
+      const res = await axios.post(`${API}/threads`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
       });
-
-      console.log("CHAT RESPONSE:", chatRes.data);
-      console.log("INSIGHTS:", chatRes.data.insights);
-
-      // ✅ FIXED HERE
-      setTableData(chatRes.data.insights || []);
-
-      const aiMessage = {
-        role: "assistant",
-        content: chatRes.data.answer
-      };
-
-      const finalMessages = [...updatedMessages, aiMessage];
-      setMessages(finalMessages);
-
-      // Save AI message
-      await axios.post(
-        `${API}/threads/${activeThread}/message`,
-        aiMessage,
-        { headers: { Authorization: `Bearer ${token}` }
-      });
-
-    } catch (e) {
-
-      console.error("CHAT ERROR:", e);
-
-      setMessages([
-        ...updatedMessages,
-        { role: "assistant", content: "System error." }
-      ]);
-
-    } finally {
-      setIsThinking(false);
-      setLoadingInsights(false);
+      threadId = res.data.thread_id;
+      setActiveThread(threadId);
     }
+
+    const userMsg = { role: "user", content: input };
+    const updated = [...messages, userMsg];
+
+    setMessages(updated);
+    setInput("");
+    setLoading(true);
+
+    await axios.post(`${API}/threads/${threadId}/message`, userMsg, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    const res = await axios.post(`${API}/chat`, {
+      messages: updated
+    });
+
+    const aiMsg = { role: "assistant", content: res.data.answer };
+
+    setMessages([...updated, aiMsg]);
+    setInsights(res.data.insights || []);
+    setLoading(false);
+
+    await axios.post(`${API}/threads/${threadId}/message`, aiMsg, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    fetchThreads();
   };
 
   return (
     <div className="app">
 
-      <header className="topbar">
+      {/* HEADER */}
+      <div className="topbar">
         <div className="logo">TechArchive AI</div>
-        <div className="subtitle">Defense Research Intelligence Platform</div>
-      </header>
+        <button className="profile-btn" onClick={() => window.location.href="/profile"}>
+          Profile
+        </button>
+      </div>
 
       <div className="layout">
 
         {/* SIDEBAR */}
         <div className="sidebar">
+          <button className="new-chat" onClick={createThread}>+ New Chat</button>
 
-          <button className="new-chat" onClick={createThread}>
-            + New Chat
-          </button>
-
-          {threads.map(thread => (
-            <div
-              key={thread._id}
-              className={activeThread === thread._id ? "thread active" : "thread"}
-              onClick={() => selectThread(thread)}
-            >
-              {thread.title}
+          {threads.map(t => (
+            <div key={t._id} className="thread">
+              <span onClick={() => {
+                setActiveThread(t._id);
+                setMessages(t.messages || []);
+              }}>
+                {t.title}
+              </span>
+              <button onClick={() => deleteThread(t._id)}>🗑</button>
             </div>
           ))}
-
         </div>
 
-        {/* CHAT */}
+        {/* MAIN CHAT */}
         <div className="chat-panel">
 
           <div className="chat-box">
-
-            {messages.map((msg, i) => (
-              <div key={i} className={`message ${msg.role}`}>
-                {msg.content}
-              </div>
-            ))}
-
-            {isThinking && (
-              <div className="thinking">
-                <div className="dots">
-                  <span></span><span></span><span></span>
-                </div>
-                Agent reasoning...
+            {messages.length === 0 && (
+              <div className="empty-state">
+                Ask anything about your research...
               </div>
             )}
 
-            <div ref={chatEndRef}></div>
+            {messages.map((m, i) => (
+              <div key={i} className={`message ${m.role}`}>
+                {m.content}
+              </div>
+            ))}
 
+            {loading && <div className="typing">● ● ●</div>}
+            <div ref={chatEndRef}></div>
           </div>
 
+          {/* INPUT */}
           <div className="input-area">
-
             <input
+              type="text"
               value={input}
               placeholder="Ask the research agent..."
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleSendMessage();
-              }}
+              onKeyDown={(e) => e.key === "Enter" && handleSend()}
             />
 
-            <button onClick={handleSendMessage}>
-              Run
-            </button>
+            <button onClick={handleSend}>Run</button>
 
+            <label className="upload-btn">
+              Upload
+              <input type="file" onChange={handleUpload} hidden />
+            </label>
           </div>
 
         </div>
 
         {/* INSIGHTS */}
         <div className="insights-panel">
+          <h3>Insights</h3>
 
-          <h3>Extracted Insights</h3>
+          {insights.length === 0 && <div>No insights yet</div>}
 
-          {loadingInsights && <div>Analyzing documents...</div>}
-
-          <div className="results">
-
-            {tableData.length === 0 && !loadingInsights && (
-              <div>No insights yet. Ask something.</div>
-            )}
-
-            {tableData.map((res, i) => {
-
-              const page = Array.isArray(res.page) ? res.page[0] : res.page;
-
-              return (
-                <div
-                  key={i}
-                  className="result-card"
-                  onClick={() => openDocument(res)}
-                >
-                  <div className="hardware">
-                    {Array.isArray(res.hardware)
-                      ? res.hardware.join(", ")
-                      : "Relevant Chunk"}
-                  </div>
-
-                  <div className="content">
-                    {res.content.substring(0, 140)}...
-                  </div>
-
-                  <div className="source">
-                    📄 {res.source} • Page {page}
-                  </div>
-                </div>
-              );
-            })}
-
-          </div>
-
+          {insights.map((r, i) => (
+            <div key={i} className="result-card">
+              <div className="hardware">Chunk</div>
+              <div>{r.content.substring(0,120)}...</div>
+              <div className="source">{r.source} • Page {r.page}</div>
+            </div>
+          ))}
         </div>
 
       </div>
-
     </div>
   );
 };
