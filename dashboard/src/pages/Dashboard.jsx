@@ -120,12 +120,14 @@ const Dashboard = () => {
     const file = pdfMap[docId];
     if (!file) return;
 
-    const url = `http://localhost:8000/docs/${file}#page=${doc.pages}`;
+    const page = Array.isArray(doc.page) ? doc.page[0] : doc.page;
+
+    const url = `http://localhost:8000/docs/${file}#page=${page}`;
     window.open(url, "_blank");
   };
 
   // ----------------------------------------------------
-  // SEND MESSAGE (🔥 FIXED)
+  // SEND MESSAGE
   // ----------------------------------------------------
   const handleSendMessage = async () => {
 
@@ -149,15 +151,16 @@ const Dashboard = () => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      // 🔥 CALL CHAT
+      // CALL CHAT
       const chatRes = await axios.post(`${API}/chat`, {
         messages: updatedMessages
       });
 
       console.log("CHAT RESPONSE:", chatRes.data);
+      console.log("INSIGHTS:", chatRes.data.insights);
 
-      // ✅ SET INSIGHTS
-      setTableData(chatRes.data.chunks || []);
+      // ✅ FIXED HERE
+      setTableData(chatRes.data.insights || []);
 
       const aiMessage = {
         role: "assistant",
@@ -171,8 +174,8 @@ const Dashboard = () => {
       await axios.post(
         `${API}/threads/${activeThread}/message`,
         aiMessage,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+        { headers: { Authorization: `Bearer ${token}` }
+      });
 
     } catch (e) {
 
@@ -274,25 +277,32 @@ const Dashboard = () => {
               <div>No insights yet. Ask something.</div>
             )}
 
-            {tableData.map((res, i) => (
-              <div
-                key={i}
-                className="result-card"
-                onClick={() => openDocument(res)}
-              >
-                <div className="hardware">
-                  {res.hardware || "Relevant Chunk"}
-                </div>
+            {tableData.map((res, i) => {
 
-                <div className="content">
-                  {res.content.substring(0, 140)}...
-                </div>
+              const page = Array.isArray(res.page) ? res.page[0] : res.page;
 
-                <div className="source">
-                  📄 {res.source} • Page {res.pages}
+              return (
+                <div
+                  key={i}
+                  className="result-card"
+                  onClick={() => openDocument(res)}
+                >
+                  <div className="hardware">
+                    {Array.isArray(res.hardware)
+                      ? res.hardware.join(", ")
+                      : "Relevant Chunk"}
+                  </div>
+
+                  <div className="content">
+                    {res.content.substring(0, 140)}...
+                  </div>
+
+                  <div className="source">
+                    📄 {res.source} • Page {page}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
           </div>
 
