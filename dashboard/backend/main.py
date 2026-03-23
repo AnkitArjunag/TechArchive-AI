@@ -1,14 +1,17 @@
-import requests
-from fastapi import FastAPI, HTTPException, Depends, Request
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+import requests #type: ignore
+from fastapi import FastAPI, HTTPException, Depends, Request #type: ignore
+from fastapi.middleware.cors import CORSMiddleware #type: ignore
+from pydantic import BaseModel #type: ignore
 from typing import List
-import chromadb
-from fastapi.staticfiles import StaticFiles
-from pymongo import MongoClient
-from bson import ObjectId
-import jwt
-import bcrypt
+from fastapi.staticfiles import StaticFiles #type: ignore
+from pymongo import MongoClient #type: ignore
+from bson import ObjectId #type: ignore
+import jwt #type: ignore
+import bcrypt #type: ignore
+
+# 🔥 IMPORT JSON SEARCH
+from search import search
+
 
 # ----------------------------------------------------
 # CONFIG
@@ -17,6 +20,7 @@ SECRET_KEY = "secret123"
 ALGORITHM = "HS256"
 
 MONGO_URI = "mongodb+srv://arjunagiankit141:Ankit12112003@ankit.r17ffqd.mongodb.net/?appName=Ankit"
+
 
 # ----------------------------------------------------
 # FastAPI Setup
@@ -36,6 +40,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ----------------------------------------------------
 # MongoDB Setup
 # ----------------------------------------------------
@@ -45,11 +50,6 @@ db = client["BEL"]
 users_collection = db["users"]
 threads_collection = db["threads"]
 
-# ----------------------------------------------------
-# ChromaDB
-# ----------------------------------------------------
-chroma_client = chromadb.PersistentClient(path="./techarchive_db")
-collection = chroma_client.get_or_create_collection(name="defense_research")
 
 # ----------------------------------------------------
 # Models
@@ -72,6 +72,7 @@ class User(BaseModel):
 class Login(BaseModel):
     email: str
     password: str
+
 
 # ----------------------------------------------------
 # AUTH HELPERS
@@ -100,6 +101,7 @@ def get_current_user(request: Request):
     except Exception as e:
         print("AUTH ERROR:", e)
         raise HTTPException(status_code=401, detail="Unauthorized")
+
 
 # ----------------------------------------------------
 # AUTH ROUTES
@@ -148,6 +150,7 @@ def login(data: Login):
 
     return {"token": token}
 
+
 # ----------------------------------------------------
 # THREADS
 # ----------------------------------------------------
@@ -189,21 +192,9 @@ def add_message(thread_id: str, message: Message, user_id=Depends(get_current_us
 
     return {"status": "ok"}
 
-# ----------------------------------------------------
-# RAG RETRIEVAL
-# ----------------------------------------------------
-def retrieve_chunks(query: str):
-
-    # 🔥 Increased retrieval size
-    results = collection.query(
-        query_texts=[query],
-        n_results=20
-    )
-
-    return results
 
 # ----------------------------------------------------
-# CHAT (FINAL FIXED)
+# CHAT (JSON RAG)
 # ----------------------------------------------------
 @app.post("/chat")
 def chat_with_archive(request: ChatRequest):
@@ -213,15 +204,12 @@ def chat_with_archive(request: ChatRequest):
 
         print("\nUSER QUERY:", user_query)
 
-        results = retrieve_chunks(user_query)
+        # 🔥 USE JSON SEARCH INSTEAD OF CHROMA
+        results = search(user_query)
 
-        docs = results.get("documents", [[]])[0]
-        metas = results.get("metadatas", [[]])[0]
+        print("RESULTS FOUND:", len(results))
 
-        print("DOCS FOUND:", len(docs))
-
-        # ❌ If no docs → early return
-        if not docs:
+        if not results:
             return {
                 "answer": "Not available in documents.",
                 "insights": []
@@ -230,18 +218,17 @@ def chat_with_archive(request: ChatRequest):
         context_parts = []
         insights = []
 
-        # 🔥 Take top 6 (not too small)
-        for doc, meta in zip(docs[:6], metas[:6]):
+        for r in results:
 
-            source = meta.get("source", "doc")
-            page = meta.get("pages") or meta.get("page") or 1
+            source = r.get("source", "doc")
+            page = r.get("page", [])
 
             context_parts.append(
-                f"[SOURCE: {source} | PAGE: {page}]\n{doc}"
+                f"[SOURCE: {source} | PAGE: {page}]\n{r['content']}"
             )
 
             insights.append({
-                "content": doc,
+                "content": r["content"],
                 "source": source,
                 "page": page
             })
@@ -283,46 +270,13 @@ CONTEXT:
         }
 
     except Exception as e:
-        print("RAG ERROR:", e)
+        print("ERROR:", e)
         raise HTTPException(status_code=500, detail="Chat failed")
 
-# ----------------------------------------------------
-# SEARCH
-# ----------------------------------------------------
-@app.get("/search")
-def search_archive(q: str):
-
-    try:
-        results = collection.query(
-            query_texts=[q],
-            n_results=10
-        )
-
-        docs = results.get("documents", [[]])[0]
-        metas = results.get("metadatas", [[]])[0]
-
-        formatted = []
-
-        for i, (doc, meta) in enumerate(zip(docs, metas)):
-
-            page = meta.get("pages") or meta.get("page") or 1
-
-            formatted.append({
-                "hardware": meta.get("hardware", "General"),
-                "content": doc,
-                "source": meta.get("source", f"doc{i+1}"),
-                "pages": page
-            })
-
-        return {"results": formatted}
-
-    except Exception as e:
-        print("Search Error:", e)
-        return {"results": []}
 
 # ----------------------------------------------------
 # RUN
 # ----------------------------------------------------
 if __name__ == "__main__":
-    import uvicorn
+    import uvicorn #type: ignore
     uvicorn.run(app, host="0.0.0.0", port=8000)
