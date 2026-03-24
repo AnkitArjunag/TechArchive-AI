@@ -6,7 +6,7 @@ from typing import List
 from fastapi.staticfiles import StaticFiles
 from pymongo import MongoClient
 from bson import ObjectId
-import jwt
+from jose import JWTError, jwt   # ✅ CORRECT JWT
 import bcrypt
 import json
 import fitz
@@ -32,10 +32,9 @@ app.mount(
     name="docs"
 )
 
-# 🔥 FIXED CORS (IMPORTANT)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # 🔥 fix here
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,11 +72,17 @@ class Login(BaseModel):
 # AUTH HELPERS
 # ----------------------------------------------------
 def create_token(user_id):
-    return jwt.encode(
-        {"user_id": str(user_id)},
-        SECRET_KEY,
-        algorithm=ALGORITHM
-    )
+    try:
+        token = jwt.encode(
+            {"user_id": str(user_id)},
+            SECRET_KEY,
+            algorithm=ALGORITHM
+        )
+        return token
+    except Exception as e:
+        print("JWT ENCODE ERROR:", e)
+        raise HTTPException(status_code=500, detail="Token generation failed")
+
 
 def get_current_user(request: Request):
     try:
@@ -87,10 +92,17 @@ def get_current_user(request: Request):
             raise HTTPException(status_code=401, detail="No token")
 
         token = auth.split(" ")[1]
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM]
+        )
 
         return payload["user_id"]
 
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
     except Exception as e:
         print("AUTH ERROR:", e)
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -101,20 +113,24 @@ def get_current_user(request: Request):
 @app.post("/api/register")
 def register(user: User):
     try:
-        if users_collection.find_one({"email": user.email}):
-            raise HTTPException(status_code=400, detail="User exists")
+        existing_user = users_collection.find_one({"email": user.email})
+        if existing_user:
+            raise HTTPException(status_code=400, detail="User already exists")
 
         hashed_pw = bcrypt.hashpw(user.password.encode(), bcrypt.gensalt())
 
-        result = users_collection.insert_one({
+        users_collection.insert_one({
             "name": user.name,
             "email": user.email,
             "password": hashed_pw.decode()
         })
 
-        token = create_token(result.inserted_id)
-        return {"token": token}
+        return {
+            "message": "User created successfully"
+        }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print("REGISTER ERROR:", e)
         raise HTTPException(status_code=500, detail="Register failed")
@@ -130,7 +146,6 @@ def login(data: Login):
 
         stored_password = user["password"]
 
-        # 🔥 HANDLE STRING/BYTES
         if isinstance(stored_password, str):
             stored_password = stored_password.encode()
 
@@ -141,8 +156,14 @@ def login(data: Login):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
         token = create_token(user["_id"])
-        return {"token": token}
 
+        return {
+            "message": "Login successful",
+            "token": token
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         print("LOGIN ERROR:", e)
         raise HTTPException(status_code=500, detail="Login failed")
@@ -152,7 +173,6 @@ def login(data: Login):
 # ----------------------------------------------------
 @app.get("/threads")
 def get_threads(user_id=Depends(get_current_user)):
-
     threads = list(threads_collection.find({"user_id": user_id}))
 
     for t in threads:
@@ -163,7 +183,6 @@ def get_threads(user_id=Depends(get_current_user)):
 
 @app.post("/threads")
 def create_thread(user_id=Depends(get_current_user)):
-
     result = threads_collection.insert_one({
         "user_id": user_id,
         "title": "New Chat",
@@ -175,11 +194,9 @@ def create_thread(user_id=Depends(get_current_user)):
 
 @app.post("/threads/{thread_id}/message")
 def add_message(thread_id: str, message: Message, user_id=Depends(get_current_user)):
-
     try:
         thread = threads_collection.find_one({"_id": ObjectId(thread_id)})
 
-        # 🔥 AUTO TITLE
         if thread and len(thread["messages"]) == 0:
             threads_collection.update_one(
                 {"_id": ObjectId(thread_id)},
@@ -213,13 +230,13 @@ def delete_all_threads(user_id=Depends(get_current_user)):
     return {"message": "All chats deleted"}
 
 # ----------------------------------------------------
-# PDF UPLOAD (FIXED SAFE VERSION)
+# PDF UPLOAD
 # ----------------------------------------------------
 @app.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
         from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer("all-MiniLM-L6-v2")  # 🔥 moved here
+        model = SentenceTransformer("all-MiniLM-L6-v2")
 
         doc = fitz.open(stream=await file.read(), filetype="pdf")
 
@@ -255,14 +272,12 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Upload failed")
 
 # ----------------------------------------------------
-# CHAT (RAG)
+# CHAT
 # ----------------------------------------------------
 @app.post("/chat")
 def chat_with_archive(request: ChatRequest):
-
     try:
         user_query = request.messages[-1].content
-
         results = search(user_query)
 
         if not results:
@@ -312,4 +327,3 @@ Question:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
