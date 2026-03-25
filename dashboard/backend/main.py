@@ -1,4 +1,4 @@
-import requests
+import requests 
 from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -6,7 +6,7 @@ from typing import List
 from fastapi.staticfiles import StaticFiles
 from pymongo import MongoClient
 from bson import ObjectId
-from jose import JWTError, jwt   # ✅ CORRECT JWT
+from jose import JWTError, jwt
 import bcrypt
 import json
 import fitz
@@ -72,162 +72,121 @@ class Login(BaseModel):
 # AUTH HELPERS
 # ----------------------------------------------------
 def create_token(user_id):
-    try:
-        token = jwt.encode(
-            {"user_id": str(user_id)},
-            SECRET_KEY,
-            algorithm=ALGORITHM
-        )
-        return token
-    except Exception as e:
-        print("JWT ENCODE ERROR:", e)
-        raise HTTPException(status_code=500, detail="Token generation failed")
-
+    return jwt.encode(
+        {"user_id": str(user_id)},
+        SECRET_KEY,
+        algorithm=ALGORITHM
+    )
 
 def get_current_user(request: Request):
+    auth = request.headers.get("Authorization")
+
+    if not auth:
+        raise HTTPException(status_code=401, detail="No token")
+
+    token = auth.split(" ")[1]
+
     try:
-        auth = request.headers.get("Authorization")
-
-        if not auth:
-            raise HTTPException(status_code=401, detail="No token")
-
-        token = auth.split(" ")[1]
-
-        payload = jwt.decode(
-            token,
-            SECRET_KEY,
-            algorithms=[ALGORITHM]
-        )
-
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload["user_id"]
-
-    except JWTError:
+    except:
         raise HTTPException(status_code=401, detail="Invalid token")
-    except Exception as e:
-        print("AUTH ERROR:", e)
-        raise HTTPException(status_code=401, detail="Unauthorized")
 
 # ----------------------------------------------------
 # AUTH ROUTES
 # ----------------------------------------------------
 @app.post("/api/register")
 def register(user: User):
-    try:
-        existing_user = users_collection.find_one({"email": user.email})
-        if existing_user:
-            raise HTTPException(status_code=400, detail="User already exists")
+    if users_collection.find_one({"email": user.email}):
+        raise HTTPException(status_code=400, detail="User exists")
 
-        hashed_pw = bcrypt.hashpw(user.password.encode(), bcrypt.gensalt())
+    hashed_pw = bcrypt.hashpw(user.password.encode(), bcrypt.gensalt())
 
-        users_collection.insert_one({
-            "name": user.name,
-            "email": user.email,
-            "password": hashed_pw.decode()
-        })
+    users_collection.insert_one({
+        "name": user.name,
+        "email": user.email,
+        "password": hashed_pw.decode()
+    })
 
-        return {
-            "message": "User created successfully"
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print("REGISTER ERROR:", e)
-        raise HTTPException(status_code=500, detail="Register failed")
-
+    return {"message": "User created successfully"}
 
 @app.post("/api/login")
 def login(data: Login):
-    try:
-        user = users_collection.find_one({"email": data.email})
+    user = users_collection.find_one({"email": data.email})
 
-        if not user:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        stored_password = user["password"]
+    if not bcrypt.checkpw(data.password.encode(), user["password"].encode()):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        if isinstance(stored_password, str):
-            stored_password = stored_password.encode()
+    token = create_token(user["_id"])
 
-        if not bcrypt.checkpw(
-            data.password.encode(),
-            stored_password
-        ):
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-
-        token = create_token(user["_id"])
-
-        return {
-            "message": "Login successful",
-            "token": token
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print("LOGIN ERROR:", e)
-        raise HTTPException(status_code=500, detail="Login failed")
+    return {"token": token}
 
 # ----------------------------------------------------
 # THREADS
 # ----------------------------------------------------
 @app.get("/threads")
 def get_threads(user_id=Depends(get_current_user)):
-    threads = list(threads_collection.find({"user_id": user_id}))
+    # 🔥 FIX: user_id must be string
+    threads = list(threads_collection.find({"user_id": str(user_id)}))
 
     for t in threads:
         t["_id"] = str(t["_id"])
+        t["messages"] = t.get("messages", [])
 
     return {"threads": threads}
 
 
 @app.post("/threads")
 def create_thread(user_id=Depends(get_current_user)):
-    result = threads_collection.insert_one({
-        "user_id": user_id,
+    # 🔥 FIX: ensure user_id is string
+    thread = {
+        "user_id": str(user_id),
         "title": "New Chat",
         "messages": []
-    })
+    }
+
+    result = threads_collection.insert_one(thread)
 
     return {"thread_id": str(result.inserted_id)}
 
 
+@app.get("/threads/{thread_id}")
+def get_thread(thread_id: str, user_id=Depends(get_current_user)):
+    thread = threads_collection.find_one({
+        "_id": ObjectId(thread_id),
+        "user_id": str(user_id)   # 🔥 FIX
+    })
+
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    thread["_id"] = str(thread["_id"])
+    thread["messages"] = thread.get("messages", [])
+
+    return thread
+
 @app.post("/threads/{thread_id}/message")
-def add_message(thread_id: str, message: Message, user_id=Depends(get_current_user)):
+def add_message(thread_id: str, message: dict, user_id=Depends(get_current_user)):
     try:
-        thread = threads_collection.find_one({"_id": ObjectId(thread_id)})
-
-        if thread and len(thread["messages"]) == 0:
-            threads_collection.update_one(
-                {"_id": ObjectId(thread_id)},
-                {"$set": {"title": message.content[:40]}}
-            )
-
         threads_collection.update_one(
-            {"_id": ObjectId(thread_id)},
-            {"$push": {"messages": message.dict()}}
+            {
+                "_id": ObjectId(thread_id),
+                "user_id": str(user_id)
+            },
+            {
+                "$push": {"messages": message}
+            }
         )
 
-        return {"status": "ok"}
+        return {"message": "Message added"}
 
     except Exception as e:
-        print("THREAD ERROR:", e)
-        raise HTTPException(status_code=500, detail="Thread error")
+        print("ADD MESSAGE ERROR:", e)
+        raise HTTPException(status_code=500, detail="Failed to add message")
 
-
-@app.delete("/threads/{thread_id}")
-def delete_thread(thread_id: str, user_id=Depends(get_current_user)):
-    threads_collection.delete_one({
-        "_id": ObjectId(thread_id),
-        "user_id": user_id
-    })
-    return {"message": "Deleted"}
-
-
-@app.delete("/threads")
-def delete_all_threads(user_id=Depends(get_current_user)):
-    threads_collection.delete_many({"user_id": user_id})
-    return {"message": "All chats deleted"}
 
 # ----------------------------------------------------
 # PDF UPLOAD
@@ -277,6 +236,10 @@ async def upload_pdf(file: UploadFile = File(...)):
 @app.post("/chat")
 def chat_with_archive(request: ChatRequest):
     try:
+        # 🔥 FIX: validate input
+        if not request.messages:
+            raise HTTPException(status_code=400, detail="No messages")
+
         user_query = request.messages[-1].content
         results = search(user_query)
 

@@ -13,20 +13,18 @@ const Dashboard = () => {
   const token = localStorage.getItem("token");
   const chatEndRef = useRef(null);
 
-  // ✅ Scroll
+  // 🔥 Auto-scroll
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // ✅ Fetch threads (FIXED - no override)
+  // 🔥 Fetch threads
   const fetchThreads = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/threads`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-
       setThreads(res.data.threads);
-
     } catch (err) {
       console.error("Fetch threads error:", err);
     }
@@ -36,7 +34,7 @@ const Dashboard = () => {
     if (token) fetchThreads();
   }, [token, fetchThreads]);
 
-  // ✅ FIXED New Chat
+  // 🔥 Create new thread
   const createThread = async () => {
     try {
       const res = await axios.post(`${API}/threads`, {}, {
@@ -50,11 +48,7 @@ const Dashboard = () => {
       setInsights([]);
 
       setThreads(prev => [
-        {
-          _id: newThreadId,
-          title: "New Chat",
-          messages: []
-        },
+        { _id: newThreadId, title: "New Chat", messages: [] },
         ...prev
       ]);
 
@@ -63,17 +57,34 @@ const Dashboard = () => {
     }
   };
 
-  // ✅ Send message
+  // 🔥 Load thread (FIXED)
+  const loadThread = async (threadId) => {
+    try {
+      const res = await axios.get(`${API}/threads/${threadId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      setActiveThread(threadId);
+      setMessages(res.data.messages || []);
+      setInsights([]);
+
+    } catch (err) {
+      console.error("Load thread error:", err.response?.data || err);
+    }
+  };
+
+  // 🔥 Send message (FIXED PAYLOAD)
   const handleSend = async () => {
     if (!input.trim()) return;
 
     let threadId = activeThread;
 
-    // Create thread if none
+    // create thread if none
     if (!threadId) {
       const res = await axios.post(`${API}/threads`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
+
       threadId = res.data.thread_id;
       setActiveThread(threadId);
     }
@@ -85,28 +96,37 @@ const Dashboard = () => {
     setInput("");
     setLoading(true);
 
-    // Save user message
-    await axios.post(`${API}/threads/${threadId}/message`, userMsg, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+    try {
+      // save user msg
+      await axios.post(`${API}/threads/${threadId}/message`, userMsg, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
 
-    // Call RAG
-    const res = await axios.post(`${API}/chat`, {
-      messages: updated
-    });
+      // 🔥 FIXED: correct format
+      const res = await axios.post(`${API}/chat`, {
+        messages: updated.map(m => ({
+          role: m.role,
+          content: m.content
+        }))
+      });
 
-    const aiMsg = { role: "assistant", content: res.data.answer };
+      const aiMsg = { role: "assistant", content: res.data.answer };
 
-    setMessages([...updated, aiMsg]);
-    setInsights(res.data.insights || []);
-    setLoading(false);
+      setMessages([...updated, aiMsg]);
+      setInsights(res.data.insights || []);
+      setLoading(false);
 
-    // Save AI message
-    await axios.post(`${API}/threads/${threadId}/message`, aiMsg, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+      // save AI msg
+      await axios.post(`${API}/threads/${threadId}/message`, aiMsg, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
 
-    fetchThreads();
+      fetchThreads();
+
+    } catch (err) {
+      console.error("CHAT ERROR:", err.response?.data || err);
+      setLoading(false);
+    }
   };
 
   return (
@@ -143,11 +163,7 @@ const Dashboard = () => {
             {threads.map(t => (
               <div
                 key={t._id}
-                onClick={() => {
-                  setActiveThread(t._id);
-                  setMessages(t.messages || []);
-                  setInsights([]);
-                }}
+                onClick={() => loadThread(t._id)}
                 className={`p-3 rounded-xl cursor-pointer text-sm ${
                   activeThread === t._id
                     ? "bg-white/20 text-white"
@@ -171,12 +187,10 @@ const Dashboard = () => {
         {/* MAIN */}
         <div className="flex-1 flex flex-col relative">
 
-          {/* CENTER */}
           <div className="flex-1 flex items-center justify-center overflow-y-auto">
 
             {messages.length === 0 ? (
               <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl p-8 text-center max-w-md shadow-xl">
-
                 <div className="text-5xl mb-4">📚</div>
 
                 <h2 className="text-xl text-white font-semibold mb-2">
@@ -194,7 +208,6 @@ const Dashboard = () => {
                 >
                   Start a new chat
                 </button>
-
               </div>
             ) : (
               <div className="w-full px-6 py-10">
@@ -222,20 +235,18 @@ const Dashboard = () => {
                   )}
 
                   <div ref={chatEndRef}></div>
-
                 </div>
               </div>
             )}
 
           </div>
 
-          {/* INPUT */}
-          {messages.length > 0 && (
-            <div className="sticky bottom-0 bg-gradient-to-t from-gray-900 via-gray-900/80 to-transparent p-4">
+          {/* 🔥 FIXED INPUT */}
+          {activeThread && (
+            <div className="sticky bottom-0 p-4">
               <div className="max-w-3xl mx-auto flex gap-2 bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl p-2">
 
                 <input
-                  type="text"
                   value={input}
                   placeholder="Ask the research agent..."
                   onChange={(e) => setInput(e.target.value)}
@@ -249,11 +260,6 @@ const Dashboard = () => {
                 >
                   Send
                 </button>
-
-                <label className="px-4 py-2 bg-white/10 text-white rounded-xl cursor-pointer">
-                  Upload
-                  <input type="file" hidden />
-                </label>
 
               </div>
             </div>
@@ -271,10 +277,7 @@ const Dashboard = () => {
           )}
 
           {insights.map((r, i) => (
-            <div
-              key={i}
-              className="mb-3 p-3 rounded-xl bg-white/10 border border-white/20"
-            >
+            <div key={i} className="mb-3 p-3 rounded-xl bg-white/10 border border-white/20">
               <div className="text-sm text-gray-200 mb-1">
                 {r.content.substring(0, 120)}...
               </div>
