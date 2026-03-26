@@ -9,5 +9,3 @@ What sensors are used in the autonomous 4WD UGV system?
 What algorithm is used for localization in the autonomous UGV system?
 
 What algorithm is used for localization in the autonomous UGV system?
-
-mongodb+srv://arjunagiankit141:Ankit12112003@ankit.r17ffqd.mongodb.net/?appName=Ankit

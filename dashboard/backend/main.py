@@ -1,16 +1,18 @@
-import requests 
+import requests
 from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List
 from fastapi.staticfiles import StaticFiles
 from pymongo import MongoClient
 from bson import ObjectId
-from jose import JWTError, jwt
+from jose import jwt
 import bcrypt
 import json
 import fitz
 
+from sentence_transformers import CrossEncoder
 from search import search, refresh_data
 
 # ----------------------------------------------------
@@ -22,9 +24,11 @@ ALGORITHM = "HS256"
 MONGO_URI = "mongodb+srv://arjunagiankit141:Ankit12112003@ankit.r17ffqd.mongodb.net/?appName=Ankit"
 
 # ----------------------------------------------------
-# FastAPI Setup
+# INIT
 # ----------------------------------------------------
 app = FastAPI()
+
+reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
 
 app.mount(
     "/docs",
@@ -41,7 +45,7 @@ app.add_middleware(
 )
 
 # ----------------------------------------------------
-# MongoDB Setup
+# DB
 # ----------------------------------------------------
 client = MongoClient(MONGO_URI)
 db = client["BEL"]
@@ -50,7 +54,7 @@ users_collection = db["users"]
 threads_collection = db["threads"]
 
 # ----------------------------------------------------
-# Models
+# MODELS
 # ----------------------------------------------------
 class Message(BaseModel):
     role: str
@@ -69,14 +73,10 @@ class Login(BaseModel):
     password: str
 
 # ----------------------------------------------------
-# AUTH HELPERS
+# AUTH
 # ----------------------------------------------------
 def create_token(user_id):
-    return jwt.encode(
-        {"user_id": str(user_id)},
-        SECRET_KEY,
-        algorithm=ALGORITHM
-    )
+    return jwt.encode({"user_id": str(user_id)}, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_current_user(request: Request):
     auth = request.headers.get("Authorization")
@@ -129,7 +129,6 @@ def login(data: Login):
 # ----------------------------------------------------
 @app.get("/threads")
 def get_threads(user_id=Depends(get_current_user)):
-    # 🔥 FIX: user_id must be string
     threads = list(threads_collection.find({"user_id": str(user_id)}))
 
     for t in threads:
@@ -138,10 +137,8 @@ def get_threads(user_id=Depends(get_current_user)):
 
     return {"threads": threads}
 
-
 @app.post("/threads")
 def create_thread(user_id=Depends(get_current_user)):
-    # 🔥 FIX: ensure user_id is string
     thread = {
         "user_id": str(user_id),
         "title": "New Chat",
@@ -152,12 +149,11 @@ def create_thread(user_id=Depends(get_current_user)):
 
     return {"thread_id": str(result.inserted_id)}
 
-
 @app.get("/threads/{thread_id}")
 def get_thread(thread_id: str, user_id=Depends(get_current_user)):
     thread = threads_collection.find_one({
         "_id": ObjectId(thread_id),
-        "user_id": str(user_id)   # 🔥 FIX
+        "user_id": str(user_id)
     })
 
     if not thread:
@@ -170,23 +166,17 @@ def get_thread(thread_id: str, user_id=Depends(get_current_user)):
 
 @app.post("/threads/{thread_id}/message")
 def add_message(thread_id: str, message: dict, user_id=Depends(get_current_user)):
-    try:
-        threads_collection.update_one(
-            {
-                "_id": ObjectId(thread_id),
-                "user_id": str(user_id)
-            },
-            {
-                "$push": {"messages": message}
-            }
-        )
+    threads_collection.update_one(
+        {
+            "_id": ObjectId(thread_id),
+            "user_id": str(user_id)
+        },
+        {
+            "$push": {"messages": message}
+        }
+    )
 
-        return {"message": "Message added"}
-
-    except Exception as e:
-        print("ADD MESSAGE ERROR:", e)
-        raise HTTPException(status_code=500, detail="Failed to add message")
-
+    return {"message": "Message added"}
 
 # ----------------------------------------------------
 # PDF UPLOAD
@@ -207,12 +197,20 @@ async def upload_pdf(file: UploadFile = File(...)):
             for i in range(0, len(text), 500):
                 chunk = text[i:i+500]
 
+                if not chunk.strip():
+                    continue
+
                 embedding = model.encode(chunk).tolist()
+
+                # 🔥 FIX: Ensure correct PDF name
+                pdf_name = file.filename
+                if not pdf_name.endswith(".pdf"):
+                    pdf_name = pdf_name.replace(".json", ".pdf")
 
                 new_chunks.append({
                     "content": chunk,
                     "embedding": embedding,
-                    "source": file.filename,
+                    "source": pdf_name,
                     "page": page_num + 1
                 })
 
@@ -231,43 +229,13 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Upload failed")
 
 # ----------------------------------------------------
-# CHAT
+# INSIGHTS (🔥 NEW)
 # ----------------------------------------------------
-@app.post("/chat")
-def chat_with_archive(request: ChatRequest):
+@app.post("/insights")
+def get_insights(request: ChatRequest):
     try:
-        # 🔥 FIX: validate input
-        if not request.messages:
-            raise HTTPException(status_code=400, detail="No messages")
-
         user_query = request.messages[-1].content
         results = search(user_query)
-
-        if not results:
-            return {"answer": "Not available", "insights": []}
-
-        context = "\n\n".join([r["content"] for r in results])
-
-        prompt = f"""
-Answer ONLY using context.
-
-Context:
-{context}
-
-Question:
-{user_query}
-"""
-
-        response = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": "llama3.2:3b",
-                "prompt": prompt,
-                "stream": False
-            }
-        )
-
-        answer = response.json().get("response", "")
 
         insights = [
             {
@@ -278,7 +246,78 @@ Question:
             for r in results
         ]
 
-        return {"answer": answer, "insights": insights}
+        return {"insights": insights}
+
+    except Exception as e:
+        print("INSIGHTS ERROR:", e)
+        raise HTTPException(status_code=500, detail="Insights failed")
+
+# ----------------------------------------------------
+# CHAT (🔥 STREAMING + RERANKING)
+# ----------------------------------------------------
+@app.post("/chat")
+def chat_with_archive(request: ChatRequest):
+    try:
+        user_query = request.messages[-1].content
+        results = search(user_query)
+
+        # 🔥 RERANK
+        pairs = [(user_query, r["content"]) for r in results]
+        scores = reranker.predict(pairs)
+
+        ranked = sorted(
+            zip(results, scores),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        results = [r[0] for r in ranked[:3]]
+
+        context = "\n\n".join([r["content"] for r in results])
+
+        prompt =  f"""
+You are a strict research assistant.
+
+Answer the question ONLY using the provided context.
+
+Rules:
+- Use ONLY the information present in the context
+- Do NOT add outside knowledge
+- Do NOT guess or assume anything
+- If the answer is not clearly present, say:
+  "The provided context does not contain enough information."
+
+- Prefer listing key points if available
+
+Context:
+{context}
+
+Question:
+{user_query}
+
+Answer:
+"""
+
+        def generate():
+            response = requests.post(
+                "http://localhost:11434/api/generate",
+                json={
+                    "model": "llama3.2:3b",
+                    "prompt": prompt,
+                    "stream": True
+                },
+                stream=True
+            )
+
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        data = json.loads(line.decode("utf-8"))
+                        yield data.get("response", "")
+                    except:
+                        continue
+
+        return StreamingResponse(generate(), media_type="text/plain")
 
     except Exception as e:
         print("CHAT ERROR:", e)

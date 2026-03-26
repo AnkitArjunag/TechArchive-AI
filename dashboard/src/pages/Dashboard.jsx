@@ -13,7 +13,7 @@ const Dashboard = () => {
   const token = localStorage.getItem("token");
   const chatEndRef = useRef(null);
 
-  // 🔥 Auto-scroll
+  // 🔥 Auto scroll
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -26,7 +26,7 @@ const Dashboard = () => {
       });
       setThreads(res.data.threads);
     } catch (err) {
-      console.error("Fetch threads error:", err);
+      console.error(err);
     }
   }, [token]);
 
@@ -34,52 +34,67 @@ const Dashboard = () => {
     if (token) fetchThreads();
   }, [token, fetchThreads]);
 
-  // 🔥 Create new thread
+  // 🔥 Create thread
   const createThread = async () => {
-    try {
-      const res = await axios.post(`${API}/threads`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+    const res = await axios.post(`${API}/threads`, {}, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
 
-      const newThreadId = res.data.thread_id;
-
-      setActiveThread(newThreadId);
-      setMessages([]);
-      setInsights([]);
-
-      setThreads(prev => [
-        { _id: newThreadId, title: "New Chat", messages: [] },
-        ...prev
-      ]);
-
-    } catch (err) {
-      console.error("Create thread error:", err);
-    }
+    const id = res.data.thread_id;
+    setActiveThread(id);
+    setMessages([]);
+    setInsights([]);
+    fetchThreads();
   };
 
-  // 🔥 Load thread (FIXED)
-  const loadThread = async (threadId) => {
-    try {
-      const res = await axios.get(`${API}/threads/${threadId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+  // 🔥 Load thread
+  const loadThread = async (id) => {
+    const res = await axios.get(`${API}/threads/${id}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
 
-      setActiveThread(threadId);
-      setMessages(res.data.messages || []);
-      setInsights([]);
-
-    } catch (err) {
-      console.error("Load thread error:", err.response?.data || err);
-    }
+    setActiveThread(id);
+    setMessages(res.data.messages || []);
+    setInsights([]);
   };
 
-  // 🔥 Send message (FIXED PAYLOAD)
+  // 🔥 PDF Mapping (YOUR OLD WORKING LOGIC)
+  const openDocument = (r) => {
+    if (!r.source) return;
+
+    const match = r.source.match(/doc\d+/);
+    if (!match) return;
+
+    const docId = match[0];
+
+    const pdfMap = {
+      doc1: "doc1_cooling_sspa.pdf",
+      doc2: "doc2_weapon_params.pdf",
+      doc3: "doc3_rf_fingerprinting.pdf",
+      doc4: "doc4_ugv_navigation.pdf",
+      doc5: "doc5_rf_microwave_trends.pdf",
+      doc6: "doc6_digital_twin.pdf",
+      doc7: "doc7_defence_ecosystem.pdf",
+      doc8: "doc8_brain_computer.pdf",
+      doc9: "doc9_bio_toxins.pdf",
+      doc10: "doc10_aircraft_aerodynamics.pdf"
+    };
+
+    const file = pdfMap[docId];
+    if (!file) return;
+
+    const firstPage = Array.isArray(r.page) ? r.page[0] : r.page;
+
+    const url = `${API}/docs/${file}#page=${firstPage}`;
+    window.open(url, "_blank");
+  };
+
+  // 🔥 Send message (Streaming + Insights)
   const handleSend = async () => {
-    if (!input.trim()) return;
+    if (!input.trim() || loading) return;
 
     let threadId = activeThread;
 
-    // create thread if none
     if (!threadId) {
       const res = await axios.post(`${API}/threads`, {}, {
         headers: { Authorization: `Bearer ${token}` }
@@ -97,34 +112,62 @@ const Dashboard = () => {
     setLoading(true);
 
     try {
-      // save user msg
+      // Save user message
       await axios.post(`${API}/threads/${threadId}/message`, userMsg, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      // 🔥 FIXED: correct format
-      const res = await axios.post(`${API}/chat`, {
-        messages: updated.map(m => ({
-          role: m.role,
-          content: m.content
-        }))
+      // 🔥 Get insights
+      const insightsRes = await axios.post(`${API}/insights`, {
+        messages: updated
       });
 
-      const aiMsg = { role: "assistant", content: res.data.answer };
+      setInsights(insightsRes.data.insights || []);
 
-      setMessages([...updated, aiMsg]);
-      setInsights(res.data.insights || []);
+      // 🔥 Stream response
+      const response = await fetch(`${API}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: updated })
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      let aiText = "";
+
+      setMessages(prev => [...prev, { role: "assistant", content: "" }]);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        aiText += chunk;
+
+        setMessages(prev => {
+          const updatedMsgs = [...prev];
+          updatedMsgs[updatedMsgs.length - 1] = {
+            role: "assistant",
+            content: aiText
+          };
+          return updatedMsgs;
+        });
+      }
+
       setLoading(false);
 
-      // save AI msg
-      await axios.post(`${API}/threads/${threadId}/message`, aiMsg, {
+      await axios.post(`${API}/threads/${threadId}/message`, {
+        role: "assistant",
+        content: aiText
+      }, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
       fetchThreads();
 
     } catch (err) {
-      console.error("CHAT ERROR:", err.response?.data || err);
+      console.error(err);
       setLoading(false);
     }
   };
@@ -141,7 +184,7 @@ const Dashboard = () => {
       <div className="flex flex-1 overflow-hidden">
 
         {/* SIDEBAR */}
-        <div className="w-64 bg-white/5 backdrop-blur-xl border-r border-white/10 p-4 flex flex-col">
+        <div className="w-64 bg-white/5 border-r border-white/10 p-4 flex flex-col">
 
           <button
             onClick={createThread}
@@ -150,16 +193,7 @@ const Dashboard = () => {
             + New Chat
           </button>
 
-          <h3 className="text-gray-400 text-sm mb-2">Recent Chats</h3>
-
           <div className="flex-1 space-y-2 overflow-y-auto">
-
-            {threads.length === 0 && (
-              <div className="text-gray-500 text-sm p-4 bg-white/5 rounded-xl">
-                No conversations yet
-              </div>
-            )}
-
             {threads.map(t => (
               <div
                 key={t._id}
@@ -173,94 +207,66 @@ const Dashboard = () => {
                 {t.title}
               </div>
             ))}
-
           </div>
 
           <button
             onClick={() => window.location.href="/profile"}
-            className="mt-4 py-2 bg-white/10 rounded-xl text-white hover:bg-white/20 transition"
+            className="mt-4 py-2 bg-white/10 rounded-xl text-white"
           >
             Profile
           </button>
         </div>
 
-        {/* MAIN */}
-        <div className="flex-1 flex flex-col relative">
+        {/* CHAT */}
+        <div className="flex-1 flex flex-col">
 
-          <div className="flex-1 flex items-center justify-center overflow-y-auto">
+          <div className="flex-1 overflow-y-auto px-6 py-10">
+            <div className="max-w-3xl mx-auto space-y-4">
 
-            {messages.length === 0 ? (
-              <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl p-8 text-center max-w-md shadow-xl">
-                <div className="text-5xl mb-4">📚</div>
-
-                <h2 className="text-xl text-white font-semibold mb-2">
-                  Welcome to TechArchive AI
-                </h2>
-
-                <p className="text-gray-300 text-sm mb-4">
-                  Your intelligent research assistant is ready to help with
-                  document analysis, insights, and answers.
-                </p>
-
-                <button
-                  onClick={createThread}
-                  className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 rounded-xl text-white hover:scale-105 transition"
+              {messages.map((m, i) => (
+                <div
+                  key={i}
+                  className={`px-4 py-3 rounded-2xl text-sm ${
+                    m.role === "user"
+                      ? "ml-auto bg-gradient-to-r from-blue-500 to-purple-600 text-white max-w-[70%]"
+                      : "bg-white/10 text-gray-200 max-w-[75%]"
+                  }`}
                 >
-                  Start a new chat
-                </button>
-              </div>
-            ) : (
-              <div className="w-full px-6 py-10">
-                <div className="max-w-3xl mx-auto space-y-4">
-
-                  {messages.map((m, i) => (
-                    <div
-                      key={i}
-                      className={`px-4 py-3 rounded-2xl text-sm ${
-                        m.role === "user"
-                          ? "ml-auto bg-gradient-to-r from-blue-500 to-purple-600 text-white max-w-[70%]"
-                          : "bg-white/10 text-gray-200 max-w-[75%]"
-                      }`}
-                    >
-                      {m.content}
-                    </div>
-                  ))}
-
-                  {loading && (
-                    <div className="flex gap-1 px-4">
-                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
-                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-150"></span>
-                      <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-300"></span>
-                    </div>
-                  )}
-
-                  <div ref={chatEndRef}></div>
+                  {m.content}
                 </div>
-              </div>
-            )}
+              ))}
 
+              {loading && (
+                <div className="text-gray-400 text-sm">Thinking...</div>
+              )}
+
+              <div ref={chatEndRef}></div>
+            </div>
           </div>
 
-          {/* 🔥 FIXED INPUT */}
+          {/* INPUT */}
           {activeThread && (
-            <div className="sticky bottom-0 p-4">
-              <div className="max-w-3xl mx-auto flex gap-2 bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl p-2">
-
+            <div className="p-4">
+              <div className="max-w-3xl mx-auto flex gap-2 bg-white/10 border border-white/20 rounded-2xl p-2">
                 <input
                   value={input}
                   placeholder="Ask the research agent..."
                   onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
                   className="flex-1 px-4 py-2 bg-transparent text-white outline-none"
                 />
-
                 <button
                   onClick={handleSend}
+                  disabled={loading}
                   className="px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl"
                 >
                   Send
                 </button>
-
               </div>
             </div>
           )}
@@ -268,7 +274,7 @@ const Dashboard = () => {
         </div>
 
         {/* INSIGHTS */}
-        <div className="w-80 bg-white/5 backdrop-blur-xl border-l border-white/10 p-4 overflow-y-auto">
+        <div className="w-80 bg-white/5 border-l border-white/10 p-4 overflow-y-auto">
 
           <h3 className="text-white text-lg mb-4">Insights</h3>
 
@@ -276,16 +282,29 @@ const Dashboard = () => {
             <div className="text-gray-400">No insights yet</div>
           )}
 
-          {insights.map((r, i) => (
-            <div key={i} className="mb-3 p-3 rounded-xl bg-white/10 border border-white/20">
-              <div className="text-sm text-gray-200 mb-1">
-                {r.content.substring(0, 120)}...
+          {insights.map((r, i) => {
+            const pages = Array.isArray(r.page) ? r.page.join(", ") : r.page;
+
+            return (
+              <div
+                key={i}
+                onClick={() => openDocument(r)}
+                className="mb-3 p-3 rounded-xl bg-white/10 border border-white/20 hover:bg-white/20 hover:scale-[1.02] cursor-pointer transition"
+              >
+                <div className="text-sm text-gray-200 mb-1">
+                  {r.content.substring(0, 120)}...
+                </div>
+
+                <div className="text-xs text-gray-400">
+                  {r.source} • Pages {pages}
+                </div>
+
+                <div className="text-xs text-blue-400 mt-1">
+                  Click to open source →
+                </div>
               </div>
-              <div className="text-xs text-gray-400">
-                {r.source} • Page {r.page}
-              </div>
-            </div>
-          ))}
+            );
+          })}
 
         </div>
 
