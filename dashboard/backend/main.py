@@ -1,18 +1,18 @@
-import requests
-from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+import requests #type: ignore
+from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File #type: ignore
+from fastapi.middleware.cors import CORSMiddleware#type: ignore
+from fastapi.responses import StreamingResponse #type: ignore
+from pydantic import BaseModel#type: ignore
 from typing import List
-from fastapi.staticfiles import StaticFiles
-from pymongo import MongoClient
-from bson import ObjectId
-from jose import jwt
-import bcrypt
+from fastapi.staticfiles import StaticFiles#type: ignore
+from pymongo import MongoClient#type: ignore
+from bson import ObjectId#type: ignore
+from jose import jwt#type: ignore
+import bcrypt#type: ignore
 import json
-import fitz
+import fitz#type: ignore
 
-from sentence_transformers import CrossEncoder
+from sentence_transformers import CrossEncoder#type: ignore
 from search import search, refresh_data
 
 # ----------------------------------------------------
@@ -125,9 +125,9 @@ def login(data: Login):
     return {"token": token}
 
 # ----------------------------------------------------
-# THREADS
+# THREADS (ALL FIXED WITH /api)
 # ----------------------------------------------------
-@app.get("/threads")
+@app.get("/api/threads")
 def get_threads(user_id=Depends(get_current_user)):
     threads = list(threads_collection.find({"user_id": str(user_id)}))
 
@@ -137,7 +137,7 @@ def get_threads(user_id=Depends(get_current_user)):
 
     return {"threads": threads}
 
-@app.post("/threads")
+@app.post("/api/threads")
 def create_thread(user_id=Depends(get_current_user)):
     thread = {
         "user_id": str(user_id),
@@ -149,7 +149,7 @@ def create_thread(user_id=Depends(get_current_user)):
 
     return {"thread_id": str(result.inserted_id)}
 
-@app.get("/threads/{thread_id}")
+@app.get("/api/threads/{thread_id}")
 def get_thread(thread_id: str, user_id=Depends(get_current_user)):
     thread = threads_collection.find_one({
         "_id": ObjectId(thread_id),
@@ -164,7 +164,7 @@ def get_thread(thread_id: str, user_id=Depends(get_current_user)):
 
     return thread
 
-@app.post("/threads/{thread_id}/message")
+@app.post("/api/threads/{thread_id}/message")
 def add_message(thread_id: str, message: dict, user_id=Depends(get_current_user)):
     threads_collection.update_one(
         {
@@ -178,13 +178,38 @@ def add_message(thread_id: str, message: dict, user_id=Depends(get_current_user)
 
     return {"message": "Message added"}
 
+@app.put("/api/threads/{thread_id}")
+def rename_thread(thread_id: str, data: dict, user_id=Depends(get_current_user)):
+    threads_collection.update_one(
+        {
+            "_id": ObjectId(thread_id),
+            "user_id": str(user_id)
+        },
+        {
+            "$set": {"title": data.get("title", "Untitled")}
+        }
+    )
+
+    return {"message": "Thread renamed"}
+
+@app.delete("/api/threads/{thread_id}")
+def delete_thread(thread_id: str, user_id=Depends(get_current_user)):
+    threads_collection.delete_one(
+        {
+            "_id": ObjectId(thread_id),
+            "user_id": str(user_id)
+        }
+    )
+
+    return {"message": "Thread deleted"}
+
 # ----------------------------------------------------
 # PDF UPLOAD
 # ----------------------------------------------------
-@app.post("/upload-pdf")
+@app.post("/api/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
-        from sentence_transformers import SentenceTransformer
+        from sentence_transformers import SentenceTransformer #type: ignore
         model = SentenceTransformer("all-MiniLM-L6-v2")
 
         doc = fitz.open(stream=await file.read(), filetype="pdf")
@@ -202,15 +227,10 @@ async def upload_pdf(file: UploadFile = File(...)):
 
                 embedding = model.encode(chunk).tolist()
 
-                # 🔥 FIX: Ensure correct PDF name
-                pdf_name = file.filename
-                if not pdf_name.endswith(".pdf"):
-                    pdf_name = pdf_name.replace(".json", ".pdf")
-
                 new_chunks.append({
                     "content": chunk,
                     "embedding": embedding,
-                    "source": pdf_name,
+                    "source": file.filename,
                     "page": page_num + 1
                 })
 
@@ -229,9 +249,9 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Upload failed")
 
 # ----------------------------------------------------
-# INSIGHTS (🔥 NEW)
+# INSIGHTS (FIXED)
 # ----------------------------------------------------
-@app.post("/insights")
+@app.post("/api/insights")
 def get_insights(request: ChatRequest):
     try:
         user_query = request.messages[-1].content
@@ -253,41 +273,40 @@ def get_insights(request: ChatRequest):
         raise HTTPException(status_code=500, detail="Insights failed")
 
 # ----------------------------------------------------
-# CHAT (🔥 STREAMING + RERANKING)
+# CHAT (FIXED)
 # ----------------------------------------------------
-@app.post("/chat")
+@app.post("/api/chat")
 def chat_with_archive(request: ChatRequest):
     try:
         user_query = request.messages[-1].content
+
+        # 🔍 Retrieve chunks
         results = search(user_query)
 
-        # 🔥 RERANK
+        # 📊 Rerank for better relevance
         pairs = [(user_query, r["content"]) for r in results]
         scores = reranker.predict(pairs)
 
-        ranked = sorted(
-            zip(results, scores),
-            key=lambda x: x[1],
-            reverse=True
-        )
+        ranked = sorted(zip(results, scores), key=lambda x: x[1], reverse=True)
 
-        results = [r[0] for r in ranked[:3]]
+        # ✅ INCREASE CONTEXT (TOP 5 instead of 3)
+        top_results = ranked[:5]
 
-        context = "\n\n".join([r["content"] for r in results])
+        # 📦 Build context
+        context = "\n\n".join([r[0]["content"] for r in top_results])
 
-        prompt =  f"""
-You are a strict research assistant.
+        # 🧠 IMPROVED PROMPT (LESS STRICT)
+        prompt = f"""
+You are a smart research assistant.
 
-Answer the question ONLY using the provided context.
+Answer the question using the provided context.
 
-Rules:
-- Use ONLY the information present in the context
-- Do NOT add outside knowledge
-- Do NOT guess or assume anything
-- If the answer is not clearly present, say:
-  "The provided context does not contain enough information."
-
-- Prefer listing key points if available
+Guidelines:
+- Use the context as your PRIMARY source
+- You MAY infer missing details if they are strongly implied
+- Combine multiple context chunks if needed
+- Keep the answer clear and helpful
+- Do NOT introduce completely unrelated information
 
 Context:
 {context}
@@ -298,6 +317,7 @@ Question:
 Answer:
 """
 
+        # 🔄 STREAM RESPONSE FROM OLLAMA
         def generate():
             response = requests.post(
                 "http://localhost:11434/api/generate",
@@ -327,5 +347,6 @@ Answer:
 # RUN
 # ----------------------------------------------------
 if __name__ == "__main__":
-    import uvicorn
+    import uvicorn #type: ignore
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
