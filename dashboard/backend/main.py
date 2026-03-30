@@ -1,18 +1,19 @@
-import requests #type: ignore
-from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File #type: ignore
-from fastapi.middleware.cors import CORSMiddleware#type: ignore
-from fastapi.responses import StreamingResponse #type: ignore
-from pydantic import BaseModel#type: ignore
+import requests # type: ignore
+from fastapi import FastAPI, HTTPException, Depends, Request, UploadFile, File # type: ignore
+from fastapi.middleware.cors import CORSMiddleware # type: ignore
+from fastapi.responses import StreamingResponse # type: ignore
+from pydantic import BaseModel  # type: ignore
 from typing import List
-from fastapi.staticfiles import StaticFiles#type: ignore
-from pymongo import MongoClient#type: ignore
-from bson import ObjectId#type: ignore
-from jose import jwt#type: ignore
-import bcrypt#type: ignore
+from fastapi.staticfiles import StaticFiles # type: ignore
+from pymongo import MongoClient # type: ignore
+from bson import ObjectId # type: ignore
+from jose import jwt # type: ignore
+import bcrypt # type: ignore
 import json
-import fitz#type: ignore
+import fitz # type: ignore
+from datetime import datetime
 
-from sentence_transformers import CrossEncoder#type: ignore
+from sentence_transformers import CrossEncoder # type: ignore
 from search import search, refresh_data
 
 # ----------------------------------------------------
@@ -28,6 +29,8 @@ MONGO_URI = "mongodb+srv://arjunagiankit141:Ankit12112003@ankit.r17ffqd.mongodb.
 # ----------------------------------------------------
 app = FastAPI()
 
+from routes.user import router as user_router
+app.include_router(user_router, prefix="/api")
 reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
 
 app.mount(
@@ -105,10 +108,12 @@ def register(user: User):
     users_collection.insert_one({
         "name": user.name,
         "email": user.email,
-        "password": hashed_pw.decode()
+        "password": hashed_pw.decode(),
+        "created_at": datetime.utcnow()   # ✅ NEW
     })
 
     return {"message": "User created successfully"}
+
 
 @app.post("/api/login")
 def login(data: Login):
@@ -125,7 +130,7 @@ def login(data: Login):
     return {"token": token}
 
 # ----------------------------------------------------
-# THREADS (ALL FIXED WITH /api)
+# THREADS
 # ----------------------------------------------------
 @app.get("/api/threads")
 def get_threads(user_id=Depends(get_current_user)):
@@ -136,6 +141,7 @@ def get_threads(user_id=Depends(get_current_user)):
         t["messages"] = t.get("messages", [])
 
     return {"threads": threads}
+
 
 @app.post("/api/threads")
 def create_thread(user_id=Depends(get_current_user)):
@@ -148,6 +154,7 @@ def create_thread(user_id=Depends(get_current_user)):
     result = threads_collection.insert_one(thread)
 
     return {"thread_id": str(result.inserted_id)}
+
 
 @app.get("/api/threads/{thread_id}")
 def get_thread(thread_id: str, user_id=Depends(get_current_user)):
@@ -164,8 +171,29 @@ def get_thread(thread_id: str, user_id=Depends(get_current_user)):
 
     return thread
 
+
 @app.post("/api/threads/{thread_id}/message")
 def add_message(thread_id: str, message: dict, user_id=Depends(get_current_user)):
+
+    thread = threads_collection.find_one({
+        "_id": ObjectId(thread_id),
+        "user_id": str(user_id)
+    })
+
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    existing_messages = thread.get("messages", [])
+
+    # ✅ AUTO TITLE
+    if message["role"] == "user" and len(existing_messages) == 0:
+        title = message["content"].strip().capitalize()[:40]
+
+        threads_collection.update_one(
+            {"_id": ObjectId(thread_id)},
+            {"$set": {"title": title}}
+        )
+
     threads_collection.update_one(
         {
             "_id": ObjectId(thread_id),
@@ -178,30 +206,16 @@ def add_message(thread_id: str, message: dict, user_id=Depends(get_current_user)
 
     return {"message": "Message added"}
 
-@app.put("/api/threads/{thread_id}")
-def rename_thread(thread_id: str, data: dict, user_id=Depends(get_current_user)):
-    threads_collection.update_one(
-        {
-            "_id": ObjectId(thread_id),
-            "user_id": str(user_id)
-        },
-        {
-            "$set": {"title": data.get("title", "Untitled")}
-        }
-    )
-
-    return {"message": "Thread renamed"}
 
 @app.delete("/api/threads/{thread_id}")
 def delete_thread(thread_id: str, user_id=Depends(get_current_user)):
-    threads_collection.delete_one(
-        {
-            "_id": ObjectId(thread_id),
-            "user_id": str(user_id)
-        }
-    )
+    threads_collection.delete_one({
+        "_id": ObjectId(thread_id),
+        "user_id": str(user_id)
+    })
 
     return {"message": "Thread deleted"}
+
 
 # ----------------------------------------------------
 # PDF UPLOAD
@@ -209,7 +223,7 @@ def delete_thread(thread_id: str, user_id=Depends(get_current_user)):
 @app.post("/api/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
-        from sentence_transformers import SentenceTransformer #type: ignore
+        from sentence_transformers import SentenceTransformer # type: ignore 
         model = SentenceTransformer("all-MiniLM-L6-v2")
 
         doc = fitz.open(stream=await file.read(), filetype="pdf")
@@ -242,71 +256,69 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         refresh_data()
 
-        return {"message": "PDF uploaded", "chunks": len(new_chunks)}
+        return {"message": "PDF uploaded"}
 
     except Exception as e:
-        print("UPLOAD ERROR:", e)
         raise HTTPException(status_code=500, detail="Upload failed")
 
+
 # ----------------------------------------------------
-# INSIGHTS (FIXED)
+# INSIGHTS (FIXED NORMALIZATION)
 # ----------------------------------------------------
 @app.post("/api/insights")
 def get_insights(request: ChatRequest):
-    try:
-        user_query = request.messages[-1].content
-        results = search(user_query)
+    user_query = request.messages[-1].content
 
-        insights = [
-            {
-                "content": r["content"],
-                "source": r["source"],
-                "page": r["page"]
-            }
-            for r in results
-        ]
+    results = search(user_query)
 
-        return {"insights": insights}
+    pairs = [(user_query, r["content"]) for r in results]
+    scores = reranker.predict(pairs)
 
-    except Exception as e:
-        print("INSIGHTS ERROR:", e)
-        raise HTTPException(status_code=500, detail="Insights failed")
+    min_s, max_s = min(scores), max(scores)
+
+    insights = []
+    for r, s in zip(results, scores):
+        norm = 0.5 if max_s == min_s else (s - min_s) / (max_s - min_s)
+
+        insights.append({
+            "content": r["content"],
+            "source": r["source"],
+            "page": r["page"],
+            "score": float(norm)
+        })
+
+    insights.sort(key=lambda x: x["score"], reverse=True)
+
+    return {"insights": insights[:5]}
+
 
 # ----------------------------------------------------
-# CHAT (FIXED)
+# CHAT
 # ----------------------------------------------------
 @app.post("/api/chat")
-def chat_with_archive(request: ChatRequest):
-    try:
-        user_query = request.messages[-1].content
+def chat(request: ChatRequest):
+    user_query = request.messages[-1].content
 
-        # 🔍 Retrieve chunks
-        results = search(user_query)
+    results = search(user_query)
 
-        # 📊 Rerank for better relevance
-        pairs = [(user_query, r["content"]) for r in results]
-        scores = reranker.predict(pairs)
+    pairs = [(user_query, r["content"]) for r in results]
+    scores = reranker.predict(pairs)
 
-        ranked = sorted(zip(results, scores), key=lambda x: x[1], reverse=True)
+    ranked = sorted(zip(results, scores), key=lambda x: x[1], reverse=True)
+    top = ranked[:3]
 
-        # ✅ INCREASE CONTEXT (TOP 5 instead of 3)
-        top_results = ranked[:5]
+    context = "\n\n".join([r[0]["content"] for r in top])
 
-        # 📦 Build context
-        context = "\n\n".join([r[0]["content"] for r in top_results])
-
-        # 🧠 IMPROVED PROMPT (LESS STRICT)
-        prompt = f"""
-You are a smart research assistant.
+    prompt = f"""
+You are a research assistant.
 
 Answer the question using the provided context.
 
-Guidelines:
-- Use the context as your PRIMARY source
-- You MAY infer missing details if they are strongly implied
-- Combine multiple context chunks if needed
-- Keep the answer clear and helpful
-- Do NOT introduce completely unrelated information
+Instructions:
+- Give a clear and complete answer in 4–6 lines
+- Be concise but informative
+- Combine relevant points from context
+- Avoid unnecessary repetition
 
 Context:
 {context}
@@ -317,36 +329,27 @@ Question:
 Answer:
 """
 
-        # 🔄 STREAM RESPONSE FROM OLLAMA
-        def generate():
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json={
-                    "model": "llama3.2:3b",
-                    "prompt": prompt,
-                    "stream": True
-                },
-                stream=True
-            )
+    def generate():
+        res = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": "llama3.2:3b", "prompt": prompt, "stream": True},
+            stream=True
+        )
 
-            for line in response.iter_lines():
-                if line:
-                    try:
-                        data = json.loads(line.decode("utf-8"))
-                        yield data.get("response", "")
-                    except:
-                        continue
+        for line in res.iter_lines():
+            if line:
+                try:
+                    data = json.loads(line.decode("utf-8"))
+                    yield data.get("response", "")
+                except:
+                    continue
 
-        return StreamingResponse(generate(), media_type="text/plain")
+    return StreamingResponse(generate(), media_type="text/plain")
 
-    except Exception as e:
-        print("CHAT ERROR:", e)
-        raise HTTPException(status_code=500, detail="Chat failed")
 
 # ----------------------------------------------------
 # RUN
 # ----------------------------------------------------
 if __name__ == "__main__":
-    import uvicorn #type: ignore
+    import uvicorn # type: ignore
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

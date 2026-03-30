@@ -154,6 +154,7 @@ function AuthPage() {
                 onChange={handleChange}
                 className="w-full px-4 py-3 rounded-xl bg-white/15 border border-white/30 text-white placeholder-gray-300"
               />
+              
             )}
 
             {error && (

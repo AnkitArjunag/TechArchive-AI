@@ -1,11 +1,59 @@
-What accuracy is required at 200 meters for the PTU wheeled UGV?
+What cooling method is used in the 3KW SSPA system and why?
+How is the convective heat transfer coefficient calculated in the SSPA system?
+Why is copper chosen as the material for PA plates in the SSPA design?
+What are the major impairments affecting DVB-S2 performance at low Es/No?
+How does coherent beam combining scale brightness compared to spectral combining?
 
-What accuracy is required at 100 meters to hit a human target using the UGV weapon system?
+What angular accuracy is required to hit a human target at 200 meters using a UGV?
+How does terrain inclination affect weapon pointing in UGV systems?
+What architecture is used in the X-band waveform generator module?
+How is phase coherence maintained in the waveform generator module?
+Why are metallic blocks used inside the waveform generator module?
 
-What surfaces is the UGV designed to operate on?
+What causes unique RF fingerprints in wireless devices?
+Why are Deep-CNN models preferred for RF fingerprinting?
+What is the role of quenching circuits in SPAD detectors?
+What are the main performance parameters of SPAD systems?
+How does the MMIC gain block maintain stability across wide frequencies?
 
-What sensors are used in the autonomous 4WD UGV system?
+What sensor fusion technique is used for UGV localization?
+Why is 3D LIDAR data converted to 2D for processing?
+What algorithms are used for global and local path planning?
+How does cross-correlation help in multi-board synchronization?
+What is the main advantage of JESD204 synchronization over PCB matching?
 
-What algorithm is used for localization in the autonomous UGV system?
+What advantages do HPM weapons have over laser weapons?
+Why is GaN replacing vacuum devices in AESA radar systems?
+What is the phase resolution of the 6-bit digital phase shifter?
+How is beam steering achieved using phase shifters in AESA systems?
+What are the main components of the 500W SSPA architecture?
 
-What algorithm is used for localization in the autonomous UGV system?
+What is a Digital Twin and how is it used in defense systems?
+How does the Iron Dome benefit from Digital Twin technology?
+What differentiates TPUs from GPUs in AI workloads?
+What are the major players in the AI hardware race?
+What design challenges are addressed in wide FOV HUD systems?
+
+Why is UDP unreliable for multicast communication?
+How do fountain codes improve reliability in MANET systems?
+What is the decoding complexity of fountain codes?
+How does Doppler shift affect LEO satellite communication?
+What is the difference between Rayleigh and Rician fading?
+
+What are the main steps in a Brain-Computer Interface workflow?
+How does non-invasive BCI differ from invasive BCI?
+What is Physical AI and how does it differ from traditional AI?
+What role does NVIDIA Omniverse play in Physical AI?
+How does FP-BPAD detect biological agents in air?
+
+How does depolarization ratio help identify biological agents?
+What is the advantage of LIDAR in bio-agent detection?
+Why is the k-ω SST model used in ICAD simulations?
+What is the optimal aperture range for ICAD detectors?
+How does celestial navigation enable GPS-independent UAV operation?
+
+What forces act on a UAV during flight?
+How do ailerons control roll in an aircraft?
+Why is QKD considered more secure than classical cryptography?
+What challenges limit practical deployment of QKD systems?
+How does distributed xMIMO improve satellite communication performance?
