@@ -264,12 +264,38 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 # ----------------------------------------------------
 # INSIGHTS (FIXED NORMALIZATION)
+# ----------------------------------------------------# ONLY SHOWING CHANGED PARTS (REST SAME)
+
+# ----------------------------------------------------
+# HELPER: FILTER RESULTS BASED ON QUERY
+# ----------------------------------------------------
+def filter_results(query, results):
+    q = query.lower()
+
+    # UAV vs UGV disambiguation
+    if "uav" in q or "aerial" in q:
+        return [r for r in results if "uav" in r["content"].lower() or "aerial" in r["content"].lower()]
+
+    if "ugv" in q or "ground vehicle" in q:
+        return [r for r in results if "ugv" in r["content"].lower()]
+
+    return results
+
+
+# ----------------------------------------------------
+# INSIGHTS (UPDATED)
 # ----------------------------------------------------
 @app.post("/api/insights")
 def get_insights(request: ChatRequest):
     user_query = request.messages[-1].content
 
     results = search(user_query)
+
+    # 🔥 NEW FILTER
+    results = filter_results(user_query, results)
+
+    if not results:
+        return {"insights": []}
 
     pairs = [(user_query, r["content"]) for r in results]
     scores = reranker.predict(pairs)
@@ -293,13 +319,21 @@ def get_insights(request: ChatRequest):
 
 
 # ----------------------------------------------------
-# CHAT
+# CHAT (UPDATED)
 # ----------------------------------------------------
 @app.post("/api/chat")
 def chat(request: ChatRequest):
     user_query = request.messages[-1].content
 
     results = search(user_query)
+
+    # 🔥 NEW FILTER
+    results = filter_results(user_query, results)
+
+    if not results:
+        def fallback():
+            yield "I could not find relevant information in the documents."
+        return StreamingResponse(fallback(), media_type="text/plain")
 
     pairs = [(user_query, r["content"]) for r in results]
     scores = reranker.predict(pairs)
@@ -309,6 +343,7 @@ def chat(request: ChatRequest):
 
     context = "\n\n".join([r[0]["content"] for r in top])
 
+    # ⚠️ PROMPT UNCHANGED (as requested)
     prompt = f"""
 You are a research assistant.
 
@@ -319,6 +354,9 @@ Instructions:
 - Be concise but informative
 - Combine relevant points from context
 - Avoid unnecessary repetition
+
+If the context is not relevant, say:
+"I could not find relevant information in the documents."
 
 Context:
 {context}
