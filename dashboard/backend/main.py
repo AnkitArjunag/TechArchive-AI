@@ -10,6 +10,7 @@ from bson import ObjectId # type: ignore
 from jose import jwt # type: ignore
 import bcrypt # type: ignore
 import json
+from utils.ocr import extract_text
 import fitz # type: ignore
 from datetime import datetime
 
@@ -223,30 +224,31 @@ def delete_thread(thread_id: str, user_id=Depends(get_current_user)):
 @app.post("/api/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
     try:
-        from sentence_transformers import SentenceTransformer # type: ignore 
+        from sentence_transformers import SentenceTransformer # type: ignore
         model = SentenceTransformer("all-MiniLM-L6-v2")
 
-        doc = fitz.open(stream=await file.read(), filetype="pdf")
+        pdf_bytes = await file.read()
+
+        # 🔥 USE OCR SYSTEM
+        text, method = extract_text(pdf_bytes)
+
+        print("✅ Extraction method:", method)
 
         new_chunks = []
 
-        for page_num, page in enumerate(doc):
-            text = page.get_text()
+        for i in range(0, len(text), 500):
+            chunk = text[i:i+500]
 
-            for i in range(0, len(text), 500):
-                chunk = text[i:i+500]
+            if not chunk.strip():
+                continue
 
-                if not chunk.strip():
-                    continue
+            embedding = model.encode(chunk).tolist()
 
-                embedding = model.encode(chunk).tolist()
-
-                new_chunks.append({
-                    "content": chunk,
-                    "embedding": embedding,
-                    "source": file.filename,
-                    "page": page_num + 1
-                })
+            new_chunks.append({
+                "content": chunk,
+                "embedding": embedding,
+                "source": file.filename
+            })
 
         with open("vector_data.json", "r+", encoding="utf-8") as f:
             data = json.load(f)
@@ -256,9 +258,14 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         refresh_data()
 
-        return {"message": "PDF uploaded"}
+        return {
+            "message": "PDF uploaded",
+            "chunks": len(new_chunks),
+            "method": method   # 🔥 THIS IS WHAT YOU ARE MISSING
+        }
 
     except Exception as e:
+        print("UPLOAD ERROR:", e)
         raise HTTPException(status_code=500, detail="Upload failed")
 
 
@@ -309,7 +316,7 @@ def get_insights(request: ChatRequest):
         insights.append({
             "content": r["content"],
             "source": r["source"],
-            "page": r["page"],
+            "page": r.get("page", 1),
             "score": float(norm)
         })
 

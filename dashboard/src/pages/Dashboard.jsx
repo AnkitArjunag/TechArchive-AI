@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
-//import { motion } from "framer-motion";
-import Navbar from "../pages/Navbar"; // ✅ FIXED PATH
+import Navbar from "../pages/Navbar";
 
 const Dashboard = () => {
   const [threads, setThreads] = useState([]);
@@ -10,6 +9,11 @@ const Dashboard = () => {
   const [input, setInput] = useState("");
   const [insights, setInsights] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // PDF Upload States
+  const [pdfFile, setPdfFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
 
   const API = "http://localhost:8000/api";
   const token = localStorage.getItem("token");
@@ -65,6 +69,30 @@ const Dashboard = () => {
     }
   };
 
+  // PDF Upload
+  const handlePDFUpload = async () => {
+    if (!pdfFile) return alert("Select a PDF first");
+
+    const formData = new FormData();
+    formData.append("file", pdfFile);
+
+    setUploading(true);
+
+    try {
+      const res = await axios.post(`${API}/upload-pdf`, formData, {
+        headers: { "Content-Type": "multipart/form-data" }
+      });
+
+      setUploadResult(res.data);
+      setPdfFile(null); // reset after upload
+    } catch (err) {
+      console.error(err);
+      alert("Upload failed");
+    }
+
+    setUploading(false);
+  };
+
   const highlightBestSentence = (text, query) => {
     if (!text || !query) return text;
 
@@ -98,6 +126,8 @@ const Dashboard = () => {
   };
 
   const openDocument = (r) => {
+    if (!r || !r.source) return;
+
     const match = r.source.match(/doc\d+/);
     if (!match) return;
 
@@ -109,9 +139,7 @@ const Dashboard = () => {
       doc5: "doc5_rf_microwave_trends.pdf",
       doc6: "doc6_digital_twin.pdf",
       doc7: "doc7_defence_ecosystem.pdf",
-      doc8: "doc8_brain_computer.pdf",
-      doc9: "doc9_bio_toxins.pdf",
-      doc10: "doc10_aircraft_aerodynamics.pdf"
+      doc8: "doc8_brain_computer.pdf"
     };
 
     const file = pdfMap[match[0]];
@@ -128,7 +156,6 @@ const Dashboard = () => {
     const userMsg = { role: "user", content: input };
     const updatedMessages = [...messages, userMsg];
 
-    // Rename thread
     setThreads(prev =>
       prev.map(t =>
         t._id === activeThread
@@ -169,11 +196,8 @@ const Dashboard = () => {
 
   return (
     <div className="h-screen flex flex-col bg-gradient-to-br from-blue-900 via-gray-900 to-purple-900 text-white">
-
-      {/* ✅ NAVBAR (FIXED POSITION) */}
       <Navbar />
 
-      {/* ✅ MAIN CONTENT */}
       <div className="flex flex-1 overflow-hidden">
 
         {/* SIDEBAR */}
@@ -216,10 +240,7 @@ const Dashboard = () => {
           <div className="flex-1 overflow-y-auto px-6 py-10">
             {!activeThread ? (
               <div className="flex flex-col items-center justify-center h-full">
-                <h2 className="text-2xl mb-4">
-                  Welcome to TechArchive AI
-                </h2>
-
+                <h2 className="text-2xl mb-4">Welcome to TechArchive AI</h2>
                 <button
                   onClick={createThread}
                   className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600"
@@ -247,13 +268,8 @@ const Dashboard = () => {
 
                 {loading && (
                   <div className="flex justify-start">
-                    <div className="px-5 py-3 rounded-2xl bg-white/10 flex items-center gap-2">
-                      <div className="flex gap-1">
-                        <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
-                        <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                        <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.4s]"></span>
-                      </div>
-                      <span>Thinking...</span>
+                    <div className="px-5 py-3 rounded-2xl bg-white/10">
+                      Thinking...
                     </div>
                   </div>
                 )}
@@ -263,11 +279,30 @@ const Dashboard = () => {
             )}
           </div>
 
-          {/* INPUT */}
+          {/* INPUT + UPLOAD */}
           <div className="p-4">
-            <div className={`max-w-3xl mx-auto flex gap-2 bg-white/10 rounded-2xl p-2 ${
+            <div className={`max-w-3xl mx-auto flex items-center gap-2 bg-white/10 rounded-2xl p-2 ${
               !activeThread ? "opacity-50 pointer-events-none" : ""
             }`}>
+
+              {/* Hidden File Input */}
+              <input
+                type="file"
+                accept="application/pdf"
+                id="pdfUpload"
+                onChange={(e) => setPdfFile(e.target.files[0])}
+                className="hidden"
+              />
+
+              {/* Attach Button */}
+              <label
+                htmlFor="pdfUpload"
+                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 cursor-pointer"
+              >
+                📎
+              </label>
+
+              {/* Text Input */}
               <input
                 value={input}
                 disabled={!activeThread}
@@ -277,6 +312,16 @@ const Dashboard = () => {
                 className="flex-1 px-4 py-2 bg-transparent outline-none"
               />
 
+              {/* Upload Button */}
+              <button
+                onClick={handlePDFUpload}
+                disabled={!pdfFile || uploading}
+                className="px-3 py-2 rounded-lg bg-green-500 hover:bg-green-600 disabled:opacity-50"
+              >
+                {uploading ? "..." : "⬆️"}
+              </button>
+
+              {/* Send Button */}
               <button
                 onClick={handleSend}
                 disabled={!input.trim() || loading}
@@ -285,6 +330,16 @@ const Dashboard = () => {
                 Send
               </button>
             </div>
+
+            {/* Upload Result */}
+            {uploadResult && (
+              <div className="max-w-3xl mx-auto mt-2 text-xs text-gray-300">
+                Chunks: {uploadResult.chunks} |{" "}
+                <span className={uploadResult.method === "ocr" ? "text-yellow-400" : "text-green-400"}>
+                  {uploadResult.method.toUpperCase()}
+                </span>
+              </div>
+            )}
           </div>
 
         </div>
