@@ -13,6 +13,7 @@ import json
 from utils.ocr import extract_text
 import fitz # type: ignore
 from datetime import datetime
+import os   # ✅ ADDED
 
 from sentence_transformers import CrossEncoder # type: ignore
 from search import search, refresh_data
@@ -24,6 +25,10 @@ SECRET_KEY = "secret123"
 ALGORITHM = "HS256"
 
 MONGO_URI = "mongodb+srv://arjunagiankit141:Ankit12112003@ankit.r17ffqd.mongodb.net/?appName=Ankit"
+
+# ✅ NEW (UPLOAD DIR)
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ----------------------------------------------------
 # INIT
@@ -38,6 +43,13 @@ app.mount(
     "/docs",
     StaticFiles(directory=r"D:\BEL_2026\Journals"),
     name="docs"
+)
+
+# ✅ NEW (SERVE UPLOADED FILES)
+app.mount(
+    "/uploads",
+    StaticFiles(directory="uploads"),
+    name="uploads"
 )
 
 app.add_middleware(
@@ -110,7 +122,7 @@ def register(user: User):
         "name": user.name,
         "email": user.email,
         "password": hashed_pw.decode(),
-        "created_at": datetime.utcnow()   # ✅ NEW
+        "created_at": datetime.utcnow()
     })
 
     return {"message": "User created successfully"}
@@ -186,7 +198,6 @@ def add_message(thread_id: str, message: dict, user_id=Depends(get_current_user)
 
     existing_messages = thread.get("messages", [])
 
-    # ✅ AUTO TITLE
     if message["role"] == "user" and len(existing_messages) == 0:
         title = message["content"].strip().capitalize()[:40]
 
@@ -219,7 +230,7 @@ def delete_thread(thread_id: str, user_id=Depends(get_current_user)):
 
 
 # ----------------------------------------------------
-# PDF UPLOAD
+# PDF UPLOAD (ONLY THIS PART MODIFIED)
 # ----------------------------------------------------
 @app.post("/api/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
@@ -229,7 +240,11 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         pdf_bytes = await file.read()
 
-        # 🔥 USE OCR SYSTEM
+        # ✅ NEW: SAVE FILE
+        file_path = os.path.join(UPLOAD_DIR, file.filename)
+        with open(file_path, "wb") as f:
+            f.write(pdf_bytes)
+
         text, method = extract_text(pdf_bytes)
 
         print("✅ Extraction method:", method)
@@ -247,7 +262,8 @@ async def upload_pdf(file: UploadFile = File(...)):
             new_chunks.append({
                 "content": chunk,
                 "embedding": embedding,
-                "source": file.filename
+                "source": file.filename,
+                "page": 1   # ✅ ADDED
             })
 
         with open("vector_data.json", "r+", encoding="utf-8") as f:
@@ -261,13 +277,12 @@ async def upload_pdf(file: UploadFile = File(...)):
         return {
             "message": "PDF uploaded",
             "chunks": len(new_chunks),
-            "method": method   # 🔥 THIS IS WHAT YOU ARE MISSING
+            "method": method
         }
 
     except Exception as e:
         print("UPLOAD ERROR:", e)
         raise HTTPException(status_code=500, detail="Upload failed")
-
 
 # ----------------------------------------------------
 # INSIGHTS (FIXED NORMALIZATION)

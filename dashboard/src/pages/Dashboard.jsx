@@ -10,7 +10,6 @@ const Dashboard = () => {
   const [insights, setInsights] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // PDF Upload States
   const [pdfFile, setPdfFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
@@ -69,7 +68,6 @@ const Dashboard = () => {
     }
   };
 
-  // PDF Upload
   const handlePDFUpload = async () => {
     if (!pdfFile) return alert("Select a PDF first");
 
@@ -84,7 +82,7 @@ const Dashboard = () => {
       });
 
       setUploadResult(res.data);
-      setPdfFile(null); // reset after upload
+      setPdfFile(null);
     } catch (err) {
       console.error(err);
       alert("Upload failed");
@@ -125,11 +123,12 @@ const Dashboard = () => {
     return "text-red-400";
   };
 
+  // 🔥 FINAL DOCUMENT HANDLER (doc1–doc8 + uploads)
   const openDocument = (r) => {
-    if (!r || !r.source) return;
+    if (!r?.source) return;
 
-    const match = r.source.match(/doc\d+/);
-    if (!match) return;
+    const file = r.source;
+    const page = Array.isArray(r.page) ? r.page[0] : r.page || 1;
 
     const pdfMap = {
       doc1: "doc1_cooling_sspa.pdf",
@@ -142,12 +141,19 @@ const Dashboard = () => {
       doc8: "doc8_brain_computer.pdf"
     };
 
-    const file = pdfMap[match[0]];
-    if (!file) return;
+    const match = file.match(/doc\d+/);
 
-    const page = Array.isArray(r.page) ? r.page[0] : r.page;
-
-    window.open(`http://localhost:8000/docs/${file}#page=${page}`, "_blank");
+    if (match && pdfMap[match[0]]) {
+      window.open(
+        `http://localhost:8000/docs/${pdfMap[match[0]]}#page=${page}`,
+        "_blank"
+      );
+    } else {
+      window.open(
+        `http://localhost:8000/uploads/${file}#page=${page}`,
+        "_blank"
+      );
+    }
   };
 
   const handleSend = async () => {
@@ -155,14 +161,6 @@ const Dashboard = () => {
 
     const userMsg = { role: "user", content: input };
     const updatedMessages = [...messages, userMsg];
-
-    setThreads(prev =>
-      prev.map(t =>
-        t._id === activeThread
-          ? { ...t, title: input.slice(0, 40) }
-          : t
-      )
-    );
 
     setMessages(updatedMessages);
     setInput("");
@@ -285,7 +283,6 @@ const Dashboard = () => {
               !activeThread ? "opacity-50 pointer-events-none" : ""
             }`}>
 
-              {/* Hidden File Input */}
               <input
                 type="file"
                 accept="application/pdf"
@@ -294,7 +291,6 @@ const Dashboard = () => {
                 className="hidden"
               />
 
-              {/* Attach Button */}
               <label
                 htmlFor="pdfUpload"
                 className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 cursor-pointer"
@@ -302,7 +298,6 @@ const Dashboard = () => {
                 📎
               </label>
 
-              {/* Text Input */}
               <input
                 value={input}
                 disabled={!activeThread}
@@ -312,7 +307,6 @@ const Dashboard = () => {
                 className="flex-1 px-4 py-2 bg-transparent outline-none"
               />
 
-              {/* Upload Button */}
               <button
                 onClick={handlePDFUpload}
                 disabled={!pdfFile || uploading}
@@ -321,7 +315,6 @@ const Dashboard = () => {
                 {uploading ? "..." : "⬆️"}
               </button>
 
-              {/* Send Button */}
               <button
                 onClick={handleSend}
                 disabled={!input.trim() || loading}
@@ -331,7 +324,6 @@ const Dashboard = () => {
               </button>
             </div>
 
-            {/* Upload Result */}
             {uploadResult && (
               <div className="max-w-3xl mx-auto mt-2 text-xs text-gray-300">
                 Chunks: {uploadResult.chunks} |{" "}
@@ -385,4 +377,4 @@ const Dashboard = () => {
   );
 };
 
-export default Dashboard;
+export default Dashboard; 

@@ -1,14 +1,17 @@
-from pydoc import doc
-
-from fastapi import APIRouter, UploadFile, File #    type: ignore
-import fitz # type: ignore # PyMuPDF, for PDF processing, type: ignore
+from fastapi import APIRouter, UploadFile, File  # type: ignore
+import fitz  # type: ignore
 import json
-from sentence_transformers import SentenceTransformer #    type: ignore
+import os
+from sentence_transformers import SentenceTransformer  # type: ignore
 from search import refresh_data
 from utils.ocr import extract_text
 
 router = APIRouter()
 model = SentenceTransformer("all-MiniLM-L6-v2")
+
+# 🔥 CREATE UPLOADS FOLDER
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 @router.post("/upload-pdf")
@@ -16,7 +19,13 @@ async def upload_pdf(file: UploadFile = File(...)):
     try:
         pdf_bytes = await file.read()
 
-        # 🔥 USE OCR SYSTEM
+        # 🔥 SAVE FILE TO DISK
+        file_path = os.path.join(UPLOAD_DIR, file.filename)
+
+        with open(file_path, "wb") as f:
+            f.write(pdf_bytes)
+
+        # 🔥 OCR + TEXT EXTRACTION
         text, method = extract_text(pdf_bytes)
 
         print("✅ Extraction method:", method)
@@ -26,12 +35,16 @@ async def upload_pdf(file: UploadFile = File(...)):
         for i in range(0, len(text), 500):
             chunk = text[i:i+500]
 
+            if not chunk.strip():
+                continue
+
             embedding = model.encode(chunk).tolist()
 
             new_chunks.append({
                 "content": chunk,
                 "embedding": embedding,
-                "source": file.filename
+                "source": file.filename,   # 🔥 used for opening PDF
+                "page": 1                  # 🔥 FIX: prevents crash
             })
 
         with open("vector_data.json", "r+", encoding="utf-8") as f:
@@ -45,7 +58,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         return {
             "message": "PDF uploaded",
             "chunks": len(new_chunks),
-            "method": method   # 🔥 IMPORTANT FOR DEBUG
+            "method": method
         }
 
     except Exception as e:
