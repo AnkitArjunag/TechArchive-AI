@@ -11,8 +11,9 @@ from jose import jwt # type: ignore
 import bcrypt # type: ignore
 import json
 from utils.ocr import extract_text
+import time # type: ignore
 import fitz # type: ignore
-from datetime import datetime
+from datetime import datetime, time
 import os   # ✅ ADDED
 
 from sentence_transformers import CrossEncoder # type: ignore
@@ -240,22 +241,26 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         pdf_bytes = await file.read()
 
-        # ✅ NEW: SAVE FILE
+        # SAVE FILE
         file_path = os.path.join(UPLOAD_DIR, file.filename)
         with open(file_path, "wb") as f:
             f.write(pdf_bytes)
 
         text, method = extract_text(pdf_bytes)
 
-        print("✅ Extraction method:", method)
-
         new_chunks = []
 
-        for i in range(0, len(text), 500):
-            chunk = text[i:i+500]
+        chunk_size = 500
+        approx_chars_per_page = 3000
+
+        for i in range(0, len(text), chunk_size):
+            chunk = text[i:i+chunk_size]
 
             if not chunk.strip():
                 continue
+
+            # 🔥 PAGE CALCULATION
+            page_number = (i // approx_chars_per_page) + 1
 
             embedding = model.encode(chunk).tolist()
 
@@ -263,7 +268,7 @@ async def upload_pdf(file: UploadFile = File(...)):
                 "content": chunk,
                 "embedding": embedding,
                 "source": file.filename,
-                "page": 1   # ✅ ADDED
+                "page": page_number
             })
 
         with open("vector_data.json", "r+", encoding="utf-8") as f:
@@ -339,6 +344,21 @@ def get_insights(request: ChatRequest):
 
     return {"insights": insights[:5]}
 
+# ----------------------------------------------------
+# GET CURRENT USER
+# ----------------------------------------------------
+@app.get("/api/me")
+def get_me(user_id=Depends(get_current_user)):
+    user = users_collection.find_one({"_id": ObjectId(user_id)})
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {
+        "name": user.get("name", ""),
+        "email": user.get("email", "")
+    }
+
 
 # ----------------------------------------------------
 # CHAT (UPDATED)
@@ -361,24 +381,28 @@ def chat(request: ChatRequest):
     scores = reranker.predict(pairs)
 
     ranked = sorted(zip(results, scores), key=lambda x: x[1], reverse=True)
-    top = ranked[:3]
-
+    top = [r for r in ranked if r[1] > 0.2][:3]
+    if not top:
+        def fallback():
+            yield "I could not find relevant information in the documents."
+        return StreamingResponse(fallback(), media_type="text/plain")   
     context = "\n\n".join([r[0]["content"] for r in top])
 
     # ⚠️ PROMPT UNCHANGED (as requested)
     prompt = f"""
 You are a research assistant.
 
-Answer the question using the provided context.
+Answer the question using ONLY the provided context.
 
 Instructions:
-- Give a clear and complete answer in 4–6 lines
-- Be concise but informative
-- Combine relevant points from context
-- Avoid unnecessary repetition
-
-If the context is not relevant, say:
-"I could not find relevant information in the documents."
+- Use ONLY the given context to generate the answer
+- DO NOT use any external knowledge
+- DO NOT make assumptions or add general knowledge
+- If the answer is not explicitly present in the context, respond EXACTLY with:
+  "I could not find relevant information in the documents."
+- Do NOT add any explanation before or after that sentence
+- Keep the answer concise (3–5 lines)
+- Combine relevant points from the context if available
 
 Context:
 {context}
@@ -396,11 +420,15 @@ Answer:
             stream=True
         )
 
+        full_text = ""
+
         for line in res.iter_lines():
             if line:
                 try:
                     data = json.loads(line.decode("utf-8"))
-                    yield data.get("response", "")
+                    chunk = data.get("response", "")
+                    full_text += chunk
+                    yield chunk
                 except:
                     continue
 
