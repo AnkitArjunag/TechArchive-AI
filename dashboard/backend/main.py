@@ -381,12 +381,12 @@ def chat(request: ChatRequest):
     scores = reranker.predict(pairs)
 
     ranked = sorted(zip(results, scores), key=lambda x: x[1], reverse=True)
-    top = [r for r in ranked if r[1] > 0.2][:3]
+    top = [r[0] for r in ranked[:8]]
     if not top:
         def fallback():
             yield "I could not find relevant information in the documents."
         return StreamingResponse(fallback(), media_type="text/plain")   
-    context = "\n\n".join([r[0]["content"] for r in top])
+    context = "\n\n".join([r["content"] for r in top])
 
     # ⚠️ PROMPT UNCHANGED (as requested)
     prompt = f"""

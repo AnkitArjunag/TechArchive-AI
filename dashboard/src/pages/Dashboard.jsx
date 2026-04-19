@@ -9,6 +9,8 @@ const Dashboard = () => {
   const [input, setInput] = useState("");
   const [insights, setInsights] = useState([]);
   const [loading, setLoading] = useState(false);
+const [uploadStatus, setUploadStatus] = useState("");
+const [uploadedFile, setUploadedFile] = useState(null);
 
   const [pdfFile, setPdfFile] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -85,27 +87,37 @@ const Dashboard = () => {
     }
   };
 
-  const handlePDFUpload = async () => {
-    if (!pdfFile) return alert("Select a PDF first");
+const handlePDFUpload = async () => {
+  if (!pdfFile) {
+    console.log("No file selected");
+    return;
+  }
 
-    const formData = new FormData();
-    formData.append("file", pdfFile);
+  console.log("Uploading file:", pdfFile);
 
-    setUploading(true);
+  const formData = new FormData();
+  formData.append("file", pdfFile);  // 🔥 MUST be "file"
 
-    try {
-      await axios.post(`${API}/upload-pdf`, formData, {
-        headers: { "Content-Type": "multipart/form-data" }
-      });
+  try {
+    const res = await fetch("http://localhost:8000/api/upload-pdf", {
+      method: "POST",
+      body: formData,
+      // ❌ DO NOT ADD HEADERS HERE
+    });
 
-      setPdfFile(null);
-    } catch (err) {
-      console.error(err);
-      alert("Upload failed");
+    const data = await res.text();
+    console.log("Response:", data);
+
+    if (!res.ok) {
+      console.error("Upload failed");
+    } else {
+      console.log("Upload success");
     }
 
-    setUploading(false);
-  };
+  } catch (err) {
+    console.error("Error:", err);
+  }
+};
 
   const highlightBestSentence = (text, query) => {
     if (!text || !query) return text;
@@ -297,6 +309,14 @@ const Dashboard = () => {
               </div>
             ) : (
               <div className="max-w-4xl mx-auto space-y-6">
+
+                 {/* ✅ Upload Status */}
+              {uploadedFile && (
+                <div className="text-sm text-gray-400">
+                  📄 {uploadedFile} — {uploadStatus}
+                </div>
+              )}
+
 
                 {messages.map((m, i) => (
                   <div
